@@ -107,6 +107,9 @@ export function reproduce(w: ptr<World>) -> i32 {
                     w.en[c] = 0.85 * (pay_i + pay_j)
                     total = total + 1
                     w.births = w.births + 1
+                    w.kids[i] = w.kids[i] + 1.0
+                    w.kids[j] = w.kids[j] + 1.0
+                    w.kids[c] = 0.0
 
                     # Generation time: mean parental age at birth.
                     let pa: f32 = 0.5 * ((w.age[i] + w.age[j]) as f32)
@@ -117,6 +120,8 @@ export function reproduce(w: ptr<World>) -> i32 {
                     let dx: f32 = torus_delta(w.bx[c] - w.bx[i], WORLD_W)
                     let dy: f32 = torus_delta(w.by[c] - w.by[i], WORLD_H)
                     w.disp2 = ema(w.disp2, 0.5 * (dx * dx + dy * dy))
+                    w.disp2_x = ema(w.disp2_x, dx * dx)
+                    w.disp2_y = ema(w.disp2_y, dy * dy)
                 }
             }
         }

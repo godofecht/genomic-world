@@ -1,0 +1,112 @@
+# The mean-field attractor solvers.
+#
+#   1  cyclic tridiagonal solve: residual of a random diagonally dominant
+#      system is at round-off level
+#   2  Purge flow model: its attractor equals the fixed point of the exact
+#      discrete viability-selection recursion, found by iterating it
+#   3  no dispersal: in each band the mean genotype reaches the local
+#      optimum, wherever the optimum lies inside the trait's range
+#   4  very fast dispersal: the cline flattens
+
+import "stdlib/memory.flow"
+import gsim.config
+import gsim.rng
+import gsim.genome
+import gsim.meanfield
+
+extern {
+    function fabs(x: f64) -> f64
+}
+
+function discrete_balance(u: f64, v: f64, s: f64, h: f64) -> f64 {
+    let mut q: f64 = 0.0
+    for g in 0 to 2000000 {
+        let wbar: f64 = 1.0 - 2.0 * h * s * q * (1.0 - q) - s * q * q
+        let wa: f64 = (1.0 - q) * (1.0 - h * s) + q * (1.0 - s)
+        let qs: f64 = q * wa / wbar
+        q = qs + u * (1.0 - qs) - v * qs
+    }
+    return q
+}
+
+function main() -> i32 {
+    let mut st: u32 = rng_stream(77 as u32, 1 as u32, 1 as u32)
+    let n: i32 = MF_BANDS
+    let lo: ptr<f64> = alloc_f64(n as i64)
+    let di: ptr<f64> = alloc_f64(n as i64)
+    let up: ptr<f64> = alloc_f64(n as i64)
+    let r: ptr<f64> = alloc_f64(n as i64)
+    let x: ptr<f64> = alloc_f64(n as i64)
+    let work: ptr<f64> = alloc_f64(4 * (n as i64))
+    for i in 0 to n {
+        lo[i] = 0.0 - (rng_unit(&st) as f64)
+        up[i] = 0.0 - (rng_unit(&st) as f64)
+        di[i] = 2.5 + (rng_unit(&st) as f64)
+        r[i] = (rng_unit(&st) as f64) - 0.5
+    }
+    cyclic_solve(lo, di, up, r, x, n, work)
+    let mut worst: f64 = 0.0
+    for i in 0 to n {
+        let im: i32 = (i + n - 1) % n
+        let ip: i32 = (i + 1) % n
+        let res: f64 = fabs(lo[i] * x[im] + di[i] * x[i] + up[i] * x[ip] - r[i])
+        if res > worst { worst = res }
+    }
+    printf("  cyclic solve max residual %.2e\n", worst)
+    if worst > 0.000000001 {
+        printf("FAIL 1 cyclic solve\n")
+        return 1
+    }
+
+    let mut a: Arch = arch_new(2026 as u32)
+    arch_set_mu(&a, 0.0005)
+    let mut m: MeanField = mf_new()
+    mf_solve_purge(&m, &a, 0.000000001)
+    for k in 0 to 16 {
+        let s: f64 = a.sel[LOCUS_DEL + k] as f64
+        let want: f64 = discrete_balance(0.0005, 0.00005, s, a.dom as f64)
+        if fabs(m.q[k] - want) > 0.0005 + 0.01 * want {
+            printf("FAIL 2 locus %d: flow model %f, recursion %f\n", k, m.q[k], want)
+            return 2
+        }
+    }
+    printf("  Purge attractors match the discrete recursion at all 16 loci\n")
+
+    let dens: ptr<f64> = alloc_f64(WORLD_H as i64)
+    for y in 0 to WORLD_H {
+        dens[y] = 100.0
+    }
+    mf_setup(&m, &a, 0.04, 0.000001, dens, 0.0)
+    m.u = 0.0
+    mf_solve_cline(&m, 0.00000001, 200000)
+    let mut err: f64 = 0.0
+    for b in 0 to MF_BANDS {
+        let th: f64 = m.theta[b]
+        if th > 0.15 and th < 0.85 {
+            let e: f64 = fabs(mf_zbar(&m, b) - th)
+            if e > err { err = e }
+        }
+    }
+    printf("  no dispersal: worst |zbar - theta| inside the range %.4f (%d steps)\n", err, m.iterations)
+    if err > 0.02 {
+        printf("FAIL 3 local adaptation without dispersal\n")
+        return 3
+    }
+
+    mf_setup(&m, &a, 0.04, 1000000.0, dens, 0.0)
+    mf_solve_cline(&m, 0.00000001, 200000)
+    let mut zmin: f64 = 10.0
+    let mut zmax: f64 = -10.0
+    for b in 0 to MF_BANDS {
+        let z: f64 = mf_zbar(&m, b)
+        if z < zmin { zmin = z }
+        if z > zmax { zmax = z }
+    }
+    printf("  fast dispersal: cline span %.5f\n", zmax - zmin)
+    if zmax - zmin > 0.01 {
+        printf("FAIL 4 cline did not flatten\n")
+        return 4
+    }
+    printf("OK meanfield\n")
+    return 0
+}

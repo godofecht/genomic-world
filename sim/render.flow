@@ -384,7 +384,7 @@ function draw_panel(cv: Canvas, w: ptr<World>, s: ptr<Stats>, ui: Ui) -> void {
     let k2: i32 = label(cv, x0, y + 26, "B OPEN OR CLOSE THE MOUNTAIN PASSES")
     let k3: i32 = label(cv, x0, y + 38, "W WARM OR COOL THE CLIMATE")
     let k4: i32 = label(cv, x0, y + 50, "M MUTATION RATE    X BOTTLENECK 90 PERCENT")
-    let k5: i32 = label(cv, x0, y + 62, "E EXPORT VCF    R NEW WORLD    ESC QUIT")
+    let k5: i32 = label(cv, x0, y + 62, "A JUMP TO ATTRACTOR    E EXPORT VCF    R NEW")
     if ui.exported > 0 {
         let k6: i32 = cv_text(cv, x0, y + 80, "EXPORTED OUT/SAMPLE.VCF AT TICK", 140, 220, 140)
         let k7: i32 = cv_int(cv, x0 + 192, y + 80, ui.exported, 140, 220, 140)

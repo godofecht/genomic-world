@@ -1,0 +1,144 @@
+# Starting the agents on the attractor instead of far from it.
+#
+# A cold start (pop_found) puts 5600 founders in eight clusters with every
+# trait locus at frequency one half and no deleterious alleles. The cline
+# then takes thousands of ticks to form, and the deleterious loci take
+# roughly 1/(hs) generations each to reach balance: tens of thousands of
+# ticks for the weakest.
+#
+# A warm start places n0 agents uniformly over the land, and draws each
+# genotype from the mean-field attractor: thermal loci at p_l(y) for the
+# agent's latitude band, deleterious loci at their balance frequency q_l,
+# each allele independently (Hardy-Weinberg and linkage equilibrium). The
+# other trait loci stay at one half, since the energy budget sets their
+# attractor and no closed form for it is used here. Neutral markers keep
+# the eight founder haplotypes, assigned by the nearest founder centre, so
+# ancestry is still visible.
+
+import .config
+import .state
+import .rng
+import .bits
+import .genome
+import .world
+import .population
+import .meanfield
+import "stdlib/memory.flow"
+
+function allele(st: ptr<u32>, p: f64) -> u32 {
+    if (rng_unit(st) as f64) < p { return 1 as u32 }
+    return 0 as u32
+}
+
+function torus_d2(ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
+    let mut dx: f32 = ax - bx
+    let mut dy: f32 = ay - by
+    let hw: f32 = (WORLD_W as f32) * 0.5
+    let hh: f32 = (WORLD_H as f32) * 0.5
+    if dx > hw { dx = dx - (WORLD_W as f32) }
+    if dx < 0.0 - hw { dx = dx + (WORLD_W as f32) }
+    if dy > hh { dy = dy - (WORLD_H as f32) }
+    if dy < 0.0 - hh { dy = dy + (WORLD_H as f32) }
+    return dx * dx + dy * dy
+}
+
+export function pop_found_attractor(w: ptr<World>, m: ptr<MeanField>, n0: i32) -> void {
+    let mut st: u32 = rng_stream(w.seed, 0 as u32, 98 as u32)
+    w.n = 0
+    w.gen_time = 0.0
+    w.disp2 = 0.0
+    let gx: array<f32, 8> = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    let gy: array<f32, 8> = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    let mark: array<u32, 8> = [0, 0, 0, 0, 0, 0, 0, 0]
+    for k in 0 to FOUNDER_GROUPS {
+        gx[k] = rng_unit(&st) * (WORLD_W as f32)
+        gy[k] = rng_unit(&st) * (WORLD_H as f32)
+        mark[k] = (low_mask(rng_below(&st, 11)))
+                | (low_mask(rng_below(&st, 11)) << (10 as u32))
+                | (low_mask(rng_below(&st, 11)) << (20 as u32))
+    }
+    let rows: i32 = WORLD_H / MF_BANDS
+    while w.n < n0 and w.n < N_MAX {
+        let x: f32 = rng_unit(&st) * (WORLD_W as f32)
+        let y: f32 = rng_unit(&st) * (WORLD_H as f32)
+        if w.terrain[cell_index(x, y)] == TERRAIN_LAND {
+            let i: i32 = w.n
+            let b: i32 = i * GENOME_WORDS
+            let band: i32 = ((y as i32) & (WORLD_H - 1)) / rows
+            for c in 0 to 3 {
+                w.genome[b + c] = rng_word(&st)
+                w.genome[b + c + CHROMS] = rng_word(&st)
+            }
+            # Thermal loci from the cline attractor.
+            let mut h0: u32 = w.genome[b] & MASK_HI16
+            let mut h1: u32 = w.genome[b + CHROMS] & MASK_HI16
+            for l in 0 to MF_LOCI {
+                let p: f64 = m.p[l * MF_BANDS + band]
+                h0 = h0 | (allele(&st, p) << (l as u32))
+                h1 = h1 | (allele(&st, p) << (l as u32))
+            }
+            w.genome[b] = h0
+            w.genome[b + CHROMS] = h1
+            # Deleterious loci at mutation-selection balance.
+            let mut d0: u32 = w.genome[b + 2] & MASK_LO16
+            let mut d1: u32 = w.genome[b + 6] & MASK_LO16
+            for k in 0 to MF_LOCI {
+                let q: f64 = m.q[k]
+                d0 = d0 | (allele(&st, q) << ((16 + k) as u32))
+                d1 = d1 | (allele(&st, q) << ((16 + k) as u32))
+            }
+            w.genome[b + 2] = d0
+            w.genome[b + 6] = d1
+            # Markers of the nearest founder centre.
+            let mut best: i32 = 0
+            let mut bd: f32 = 1000000000.0
+            for k in 0 to FOUNDER_GROUPS {
+                let d: f32 = torus_d2(x, y, gx[k], gy[k])
+                if d < bd {
+                    bd = d
+                    best = k
+                }
+            }
+            w.genome[b + 3] = mark[best]
+            w.genome[b + 7] = mark[best]
+            w.px[i] = x
+            w.py[i] = y
+            w.bx[i] = x
+            w.by[i] = y
+            w.mid[i] = -1.0
+            w.kids[i] = 0.0
+            w.hd[i] = rng_unit(&st) * 6.2831853
+            w.age[i] = rng_below(&st, MAX_AGE / 2)
+            w.cd[i] = 0
+            w.seed_of[i] = pop_fresh_seed(w)
+            pop_express(w, i, &st)
+            w.en[i] = 0.6 * w.thr[i]
+            w.n = w.n + 1
+        }
+    }
+}
+
+# Replace the population with one drawn from the attractor of the current
+# world: density across latitude and dispersal measured from the agents
+# alive now, selection width from calibration. Keeps the population size.
+export function sim_jump_to_attractor(w: ptr<World>) -> void {
+    let dens: ptr<f64> = alloc_f64(WORLD_H as i64)
+    for y in 0 to WORLD_H {
+        dens[y] = 1.0
+    }
+    for i in 0 to w.n {
+        let row: i32 = (w.py[i] as i32) & (WORLD_H - 1)
+        dens[row] = dens[row] + 1.0
+    }
+    let mut sigma2: f64 = w.disp2 as f64
+    if sigma2 <= 0.0 { sigma2 = CAL_SIGMA2 }
+    let mut n0: i32 = w.n
+    if n0 < 50000 { n0 = 50000 }
+    let mut m: MeanField = mf_new()
+    mf_setup(&m, &w.arch, CAL_OMEGA2, sigma2, dens, w.climate.warming)
+    mf_solve_cline(&m, 0.0000001, 100000)
+    mf_solve_purge(&m, &w.arch, 0.000000001)
+    let d: f32 = w.disp2
+    pop_found_attractor(w, &m, n0)
+    w.disp2 = d
+}

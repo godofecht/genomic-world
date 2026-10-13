@@ -30,7 +30,8 @@ struct Agents {
     mid: ptr<f32>,
     bx: ptr<f32>,
     by: ptr<f32>,
-    viab: ptr<f32>
+    viab: ptr<f32>,
+    kids: ptr<f32>
 }
 
 struct World {
@@ -74,6 +75,7 @@ struct World {
     bx: ptr<f32>,
     by: ptr<f32>,
     viab: ptr<f32>,
+    kids: ptr<f32>,
     back: Agents,
     slot_dst: ptr<i32>,
 
@@ -95,5 +97,14 @@ struct World {
     # running estimates, exponential moving averages over births
     gen_time: f32,
     disp2: f32,
-    land_cells: i32
+    disp2_x: f32,
+    disp2_y: f32,
+    land_cells: i32,
+
+    # Selection calibration: at each death, lifetime offspring are binned by
+    # thermal mismatch at the birthplace. Read by sim/calibrate.flow.
+    cal_on: bool,
+    cal_n: ptr<f64>,
+    cal_kids: ptr<f64>,
+    cal_d2: ptr<f64>
 }

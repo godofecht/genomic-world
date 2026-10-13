@@ -1,0 +1,397 @@
+# The deterministic attractors behind the patterns the agents produce.
+#
+# Two mean-field models, both in generations, both integrated to their fixed
+# point. The fixed point is what the agent population relaxes to; starting
+# the agents there skips the transient (see sim/warmstart.flow).
+#
+# 1. Mutation-selection balance at each deleterious locus, as a Flow
+#    evolution model, one instance per locus. q is the frequency of the
+#    deleterious allele, u the forward and v the back mutation rate:
+#
+#      dq/dt = u (1 - q) - v q - s q (1 - q) (h + (1 - 2h) q) / wbar
+#      wbar  = 1 - 2 h s q (1 - q) - s q^2
+#
+#    This is the exact single-locus viability-selection recursion written as
+#    a rate; its fixed points are the recursion's.
+#
+# 2. The thermal cline: allele frequency p_l(y) at each of the 16 thermal
+#    loci, in latitude bands, under Gaussian stabilising selection toward
+#    local temperature theta(y), dispersal and mutation. With alpha_l the
+#    effect of one allele, zbar = sum 2 alpha p and Vg = sum 2 alpha^2 p q:
+#
+#      dp/dt = p q alpha (theta - zbar) / Vs                   directional
+#            - p q alpha^2 (1 - 2p) / (2 Vs)                   stabilising
+#            + (sigma2 / 2) (p'' + 2 (ln n)' p')               dispersal
+#            + u (1 - 2p)                                      mutation
+#      Vs    = omega2 + Vg + Ve
+#
+#    Selection terms follow Wright's formula dp = (pq/2) d ln wbar / dp for
+#    an additive trait under Gaussian selection (Barton and Turelli 1989).
+#    The dispersal term with a density gradient n(y) is Nagylaki's (1975).
+#    omega2, sigma2 and n(y) come from the agents through sim/calibrate.flow.
+#
+#    Linkage disequilibrium. Dispersal across a cline mixes genotypes from
+#    places with different allele frequencies, which builds associations
+#    between loci. At quasi-linkage equilibrium (Barton 1983, Multilocus
+#    clines, Evolution 37:454) the gametic disequilibrium is
+#
+#      D_ij = sigma2 p_i' p_j' / r_ij
+#
+#    with r_ij the recombination fraction (Haldane, all 16 thermal loci on
+#    one chromosome) and p' the gradient along latitude. D enters the
+#    genetic variance, Vg += sum_{i != j} 2 alpha_i alpha_j D_ij, and the
+#    directional response of each locus, whose effective effect becomes
+#    alpha_i + sum_j alpha_j D_ij / (p_i q_i). With ld = false the model is
+#    the linkage-equilibrium one above. The agents show Vg up to 3.4 times
+#    the linkage-equilibrium value where the cline is steepest.
+
+import "stdlib/memory.flow"
+import .config
+import .genome
+
+extern {
+    function cos(x: f64) -> f64
+    function log(x: f64) -> f64
+    function fabs(x: f64) -> f64
+    function exp(x: f64) -> f64
+}
+
+flow Purge {
+    state q: f64 = 0.0
+    param u: f64 = 0.0005
+    param v: f64 = 0.00005
+    param s: f64 = 0.03
+    param h: f64 = 0.25
+
+    q evolves as u * (1.0 - q) - v * q - s * q * (1.0 - q) * (h + (1.0 - 2.0 * h) * q) / (1.0 - 2.0 * h * s * q * (1.0 - q) - s * q * q)
+}
+
+const MF_BANDS: i32 = 64
+const MF_DY: f64 = 4.0
+const MF_LOCI: i32 = 16
+
+struct MeanField {
+    p: ptr<f64>,
+    next: ptr<f64>,
+    theta: ptr<f64>,
+    lnn: ptr<f64>,
+    alpha: ptr<f64>,
+    q: ptr<f64>,
+    omega2: f64,
+    sigma2: f64,
+    ve: f64,
+    u: f64,
+    iterations: i32,
+    residual: f64,
+    ld: bool,
+    map_len: f64,
+    dij: ptr<f64>,
+    cov: ptr<f64>
+}
+
+export function mf_new() -> MeanField {
+    let nb: i64 = MF_BANDS as i64
+    return MeanField {
+        p: alloc_f64(nb * (MF_LOCI as i64)),
+        next: alloc_f64(nb * (MF_LOCI as i64)),
+        theta: alloc_f64(nb),
+        lnn: alloc_f64(nb),
+        alpha: alloc_f64(MF_LOCI as i64),
+        q: alloc_f64(MF_LOCI as i64),
+        omega2: 0.0, sigma2: 0.0, ve: 0.0, u: 0.0,
+        iterations: 0, residual: 0.0,
+        ld: true, map_len: 1.0,
+        dij: alloc_f64((MF_LOCI * MF_LOCI) as i64),
+        cov: alloc_f64(nb * (MF_LOCI as i64))
+    }
+}
+
+# Seasonal-mean temperature at the centre of band b, with a warming offset.
+export function mf_theta(b: i32, warming: f64) -> f64 {
+    let lat: f64 = ((b as f64) + 0.5) / (MF_BANDS as f64)
+    return 0.5 - 0.42 * cos(6.283185307179586 * lat) + warming
+}
+
+# Parameters from the architecture and a calibration. density has one entry
+# per grid row and is summed into bands.
+export function mf_setup(m: ptr<MeanField>, a: ptr<Arch>, omega2: f64, sigma2: f64,
+                         density: ptr<f64>, warming: f64) -> void {
+    m.omega2 = omega2
+    m.sigma2 = sigma2
+    m.ve = (a.env_sd as f64) * (a.env_sd as f64)
+    m.u = a.mu as f64
+    m.map_len = a.map_len as f64
+    let rows: i32 = WORLD_H / MF_BANDS
+    for b in 0 to MF_BANDS {
+        m.theta[b] = mf_theta(b, warming)
+        let mut n: f64 = 0.0
+        for r in 0 to rows {
+            n = n + density[b * rows + r]
+        }
+        if n < 1.0 { n = 1.0 }
+        m.lnn[b] = log(n)
+    }
+    for l in 0 to MF_LOCI {
+        m.alpha[l] = 0.5 * (a.additive[LOCUS_TOPT + l] as f64)
+        for b in 0 to MF_BANDS {
+            m.p[l * MF_BANDS + b] = 0.5
+        }
+    }
+}
+
+export function mf_zbar(m: ptr<MeanField>, b: i32) -> f64 {
+    let mut z: f64 = 0.0
+    for l in 0 to MF_LOCI {
+        z = z + 2.0 * m.alpha[l] * m.p[l * MF_BANDS + b]
+    }
+    return z
+}
+
+# Quasi-linkage-equilibrium D_ij for band b, into m.dij. Zero when ld is
+# off. Each D is clipped to the range two allele frequencies allow.
+function mf_ld(m: ptr<MeanField>, b: i32) -> void {
+    let bm: i32 = (b + MF_BANDS - 1) % MF_BANDS
+    let bp: i32 = (b + 1) % MF_BANDS
+    for i in 0 to MF_LOCI {
+        for j in 0 to MF_LOCI {
+            m.dij[i * MF_LOCI + j] = 0.0
+        }
+    }
+    if !m.ld { return }
+    for i in 0 to MF_LOCI {
+        let pi: f64 = m.p[i * MF_BANDS + b]
+        let gi: f64 = (m.p[i * MF_BANDS + bp] - m.p[i * MF_BANDS + bm]) / (2.0 * MF_DY)
+        for j in i + 1 to MF_LOCI {
+            let pj: f64 = m.p[j * MF_BANDS + b]
+            let gj: f64 = (m.p[j * MF_BANDS + bp] - m.p[j * MF_BANDS + bm]) / (2.0 * MF_DY)
+            let r: f64 = haldane_f64(m.map_len * ((j - i) as f64) / 31.0)
+            let mut d: f64 = m.sigma2 * gi * gj / r
+            let hi: f64 = fmin(pi * (1.0 - pj), pj * (1.0 - pi))
+            let lo: f64 = 0.0 - fmin(pi * pj, (1.0 - pi) * (1.0 - pj))
+            if d > hi { d = hi }
+            if d < lo { d = lo }
+            m.dij[i * MF_LOCI + j] = d
+            m.dij[j * MF_LOCI + i] = d
+        }
+    }
+}
+
+function haldane_f64(d: f64) -> f64 {
+    return 0.5 * (1.0 - exp(-2.0 * d))
+}
+
+function fmin(a: f64, b: f64) -> f64 {
+    if a < b { return a }
+    return b
+}
+
+# Genetic variance in band b, including the disequilibrium in m.dij.
+function mf_vg(m: ptr<MeanField>, b: i32) -> f64 {
+    let mut v: f64 = 0.0
+    for l in 0 to MF_LOCI {
+        let p: f64 = m.p[l * MF_BANDS + b]
+        v = v + 2.0 * m.alpha[l] * m.alpha[l] * p * (1.0 - p)
+    }
+    for i in 0 to MF_LOCI {
+        for j in 0 to MF_LOCI {
+            if i != j {
+                v = v + 2.0 * m.alpha[i] * m.alpha[j] * m.dij[i * MF_LOCI + j]
+            }
+        }
+    }
+    return v
+}
+
+# Solve the cyclic tridiagonal system
+#   lo[i] x[i-1] + di[i] x[i] + up[i] x[i+1] = r[i],   indices mod n
+# by the Thomas algorithm with a Sherman-Morrison correction for the two
+# corner terms. work needs 4n entries.
+export function cyclic_solve(lo: ptr<f64>, di: ptr<f64>, up: ptr<f64>, r: ptr<f64>,
+                      x: ptr<f64>, n: i32, work: ptr<f64>) -> void {
+    let bb: ptr<f64> = work
+    let cp: ptr<f64> = &work[n]
+    let y: ptr<f64> = &work[2 * n]
+    let z: ptr<f64> = &work[3 * n]
+    let gamma: f64 = 0.0 - di[0]
+    let alpha: f64 = lo[0]
+    let beta: f64 = up[n - 1]
+    for i in 0 to n {
+        bb[i] = di[i]
+    }
+    bb[0] = di[0] - gamma
+    bb[n - 1] = di[n - 1] - alpha * beta / gamma
+    # Thomas for y with rhs r, and for z with rhs u = (gamma, 0, ..., alpha).
+    cp[0] = up[0] / bb[0]
+    y[0] = r[0] / bb[0]
+    z[0] = gamma / bb[0]
+    for i in 1 to n {
+        let mut ui: f64 = 0.0
+        if i == n - 1 { ui = beta }
+        let den: f64 = bb[i] - lo[i] * cp[i - 1]
+        if i < n - 1 { cp[i] = up[i] / den }
+        y[i] = (r[i] - lo[i] * y[i - 1]) / den
+        z[i] = (ui - lo[i] * z[i - 1]) / den
+    }
+    let mut k: i32 = n - 2
+    while k >= 0 {
+        y[k] = y[k] - cp[k] * y[k + 1]
+        z[k] = z[k] - cp[k] * z[k + 1]
+        k = k - 1
+    }
+    let fac: f64 = (y[0] + alpha * y[n - 1] / gamma) / (1.0 + z[0] + alpha * z[n - 1] / gamma)
+    for i in 0 to n {
+        x[i] = y[i] - fac * z[i]
+    }
+}
+
+# One step of dt generations: selection and mutation explicit, dispersal
+# implicit. Dispersal with the density gradient is a non-symmetric
+# tridiagonal operator around the latitude circle, so the step is stable at
+# any dt and the attractor is reached in a few hundred steps. Returns the
+# largest |dp/dt|.
+function mf_cline_step(m: ptr<MeanField>, dt: f64, lo: ptr<f64>, di: ptr<f64>, up: ptr<f64>,
+                       rhs: ptr<f64>, col: ptr<f64>, work: ptr<f64>) -> f64 {
+    let d: f64 = 0.5 * m.sigma2 / (MF_DY * MF_DY)
+    for b in 0 to MF_BANDS {
+        let bm: i32 = (b + MF_BANDS - 1) % MF_BANDS
+        let bp: i32 = (b + 1) % MF_BANDS
+        # Nagylaki drift term 2 (ln n)' p' in band units, central difference.
+        let g: f64 = (m.lnn[bp] - m.lnn[bm]) * 0.5
+        lo[b] = 0.0 - dt * d * (1.0 - g)
+        up[b] = 0.0 - dt * d * (1.0 + g)
+        di[b] = 1.0 + 2.0 * dt * d
+    }
+    let mut worst: f64 = 0.0
+    # Reaction terms read zbar and Vg from the current state for every locus,
+    # so compute them before any locus is updated.
+    # next holds, per band: zbar, Vs, then for each locus the summed
+    # disequilibrium with the other loci weighted by their effects.
+    for b in 0 to MF_BANDS {
+        mf_ld(m, b)
+        m.next[b] = mf_zbar(m, b)
+        m.next[MF_BANDS + b] = m.omega2 + mf_vg(m, b) + m.ve
+        for i in 0 to MF_LOCI {
+            let mut c: f64 = 0.0
+            for j in 0 to MF_LOCI {
+                c = c + m.alpha[j] * m.dij[i * MF_LOCI + j]
+            }
+            m.cov[i * MF_BANDS + b] = c
+        }
+    }
+    for l in 0 to MF_LOCI {
+        let k: i32 = l * MF_BANDS
+        let al: f64 = m.alpha[l]
+        for b in 0 to MF_BANDS {
+            let p: f64 = m.p[k + b]
+            let pq: f64 = p * (1.0 - p)
+            let vs: f64 = m.next[MF_BANDS + b]
+            let sel: f64 = (pq * al + m.cov[k + b]) * (m.theta[b] - m.next[b]) / vs
+                         - pq * al * al * (1.0 - 2.0 * p) / (2.0 * vs)
+            rhs[b] = p + dt * (sel + m.u * (1.0 - 2.0 * p))
+        }
+        cyclic_solve(lo, di, up, rhs, col, MF_BANDS, work)
+        for b in 0 to MF_BANDS {
+            let mut np: f64 = col[b]
+            if np < 0.0 { np = 0.0 }
+            if np > 1.0 { np = 1.0 }
+            let rate: f64 = fabs(np - m.p[k + b]) / dt
+            if rate > worst { worst = rate }
+            m.p[k + b] = np
+        }
+    }
+    return worst
+}
+
+# Integrate the cline to its attractor: stop when no allele frequency moves
+# faster than tol per generation.
+export function mf_solve_cline(m: ptr<MeanField>, tol: f64, max_iter: i32) -> void {
+    let nb: i64 = MF_BANDS as i64
+    let lo: ptr<f64> = alloc_f64(nb)
+    let di: ptr<f64> = alloc_f64(nb)
+    let up: ptr<f64> = alloc_f64(nb)
+    let rhs: ptr<f64> = alloc_f64(nb)
+    let col: ptr<f64> = alloc_f64(nb)
+    let work: ptr<f64> = alloc_f64(4 * nb)
+    let dt: f64 = 1.0
+    let mut it: i32 = 0
+    let mut r: f64 = 1.0
+    while it < max_iter and r > tol {
+        r = mf_cline_step(m, dt, lo, di, up, rhs, col, work)
+        it = it + 1
+    }
+    m.iterations = it
+    m.residual = r
+}
+
+# Mutation-selection balance at each deleterious locus: one Purge model per
+# locus, stepped until it stops moving.
+export function mf_solve_purge(m: ptr<MeanField>, a: ptr<Arch>, tol: f64) -> void {
+    for k in 0 to MF_LOCI {
+        let mut pg: Purge = Purge_new()
+        pg.u = a.mu as f64
+        pg.v = (a.mu * a.back_frac) as f64
+        pg.s = a.sel[LOCUS_DEL + k] as f64
+        pg.h = a.dom as f64
+        let mut last: f64 = -1.0
+        let mut it: i32 = 0
+        while fabs(pg.q - last) > tol and it < 2000000 {
+            last = pg.q
+            for j in 0 to 100 {
+                Purge_step(&pg, 1.0)
+            }
+            it = it + 1
+        }
+        m.q[k] = pg.q
+    }
+}
+
+# Predicted mean count of deleterious alleles per genome.
+export function mf_burden(m: ptr<MeanField>) -> f64 {
+    let mut b: f64 = 0.0
+    for k in 0 to MF_LOCI {
+        b = b + 2.0 * m.q[k]
+    }
+    return b
+}
+
+# The transient from a clean start: integrate every locus's Purge model from
+# q = 0 for `gens` generations and return the predicted burden then.
+export function mf_purge_transient(a: ptr<Arch>, gens: f64) -> f64 {
+    let mut b: f64 = 0.0
+    for k in 0 to MF_LOCI {
+        let mut pg: Purge = Purge_new()
+        pg.u = a.mu as f64
+        pg.v = (a.mu * a.back_frac) as f64
+        pg.s = a.sel[LOCUS_DEL + k] as f64
+        pg.h = a.dom as f64
+        let whole: i32 = gens as i32
+        for g in 0 to whole {
+            Purge_step(&pg, 1.0)
+        }
+        let rest: f64 = gens - (whole as f64)
+        if rest > 0.0 {
+            Purge_step(&pg, rest)
+        }
+        b = b + 2.0 * pg.q
+    }
+    return b
+}
+
+# Generations a clean start needs to reach `frac` of the balance burden.
+export function mf_purge_time_to(m: ptr<MeanField>, a: ptr<Arch>, frac: f64) -> f64 {
+    let goal: f64 = frac * mf_burden(m)
+    let mut g: f64 = 0.0
+    let mut step: f64 = 512.0
+    # Doubling search, then bisection on whole generations.
+    while mf_purge_transient(a, g + step) < goal and g < 10000000.0 {
+        g = g + step
+        step = step * 2.0
+    }
+    let mut lo: f64 = g
+    let mut hi: f64 = g + step
+    while hi - lo > 1.0 {
+        let mid: f64 = (lo + hi) * 0.5
+        if mf_purge_transient(a, mid) < goal { lo = mid } else { hi = mid }
+    }
+    return hi
+}

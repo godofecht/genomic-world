@@ -1,0 +1,118 @@
+# Measuring, from the agents, the quantities the mean-field model needs.
+#
+#   omega2   width of Gaussian stabilising selection on thermal optimum, per
+#            generation. Each dying agent's lifetime offspring count is
+#            binned by d = theta - P, the seasonal-mean temperature at its
+#            birthplace minus its thermal phenotype. Fitting
+#                ln(mean offspring) = a - d^2 / (2 omega2)
+#            by least squares weighted by bin counts gives omega2. This is a
+#            Lande-Arnold style estimate of the fitness surface.
+#   sigma2   axial dispersal variance per generation (w.disp2)
+#   gen_time ticks per generation (w.gen_time)
+#   density  agents per row of latitude, averaged over the window, which
+#            sets the asymmetry of gene flow in the cline
+
+import "stdlib/memory.flow"
+import .config
+import .state
+
+const CAL_MIN_N: f64 = 300.0
+
+struct Calibration {
+    omega2: f64,
+    sigma2: f64,
+    gen_time: f64,
+    mean_n: f64,
+    samples: i32,
+    density: ptr<f64>,
+    deaths: f64,
+    bins_used: i32
+}
+
+export function cal_new() -> Calibration {
+    return Calibration {
+        omega2: 0.0, sigma2: 0.0, gen_time: 0.0, mean_n: 0.0, samples: 0,
+        density: alloc_f64(WORLD_H as i64), deaths: 0.0, bins_used: 0
+    }
+}
+
+export function cal_start(w: ptr<World>, c: ptr<Calibration>) -> void {
+    for b in 0 to CAL_BINS {
+        w.cal_n[b] = 0.0
+        w.cal_kids[b] = 0.0
+        w.cal_d2[b] = 0.0
+    }
+    for y in 0 to WORLD_H {
+        c.density[y] = 0.0
+    }
+    c.samples = 0
+    c.sigma2 = 0.0
+    c.gen_time = 0.0
+    c.mean_n = 0.0
+    w.cal_on = true
+}
+
+# Call once per tick during the window.
+export function cal_sample(w: ptr<World>, c: ptr<Calibration>) -> void {
+    for i in 0 to w.n {
+        let row: i32 = (w.py[i] as i32) & (WORLD_H - 1)
+        c.density[row] = c.density[row] + 1.0
+    }
+    c.sigma2 = c.sigma2 + (w.disp2 as f64)
+    c.gen_time = c.gen_time + (w.gen_time as f64)
+    c.mean_n = c.mean_n + (w.n as f64)
+    c.samples = c.samples + 1
+}
+
+extern {
+    function log(x: f64) -> f64
+}
+
+export function cal_finish(w: ptr<World>, c: ptr<Calibration>) -> void {
+    w.cal_on = false
+    let k: f64 = c.samples as f64
+    for y in 0 to WORLD_H {
+        c.density[y] = c.density[y] / k
+    }
+    c.sigma2 = c.sigma2 / k
+    c.gen_time = c.gen_time / k
+    c.mean_n = c.mean_n / k
+
+    # Weighted least squares of ln(mean kids) on mean d^2 per bin.
+    let mut sw: f64 = 0.0
+    let mut sx: f64 = 0.0
+    let mut sy: f64 = 0.0
+    let mut sxx: f64 = 0.0
+    let mut sxy: f64 = 0.0
+    let mut used: i32 = 0
+    let mut deaths: f64 = 0.0
+    for b in 0 to CAL_BINS {
+        let n: f64 = w.cal_n[b]
+        deaths = deaths + n
+        if n >= CAL_MIN_N and w.cal_kids[b] > 0.0 {
+            let x: f64 = w.cal_d2[b] / n
+            let y: f64 = log(w.cal_kids[b] / n)
+            sw = sw + n
+            sx = sx + n * x
+            sy = sy + n * y
+            sxx = sxx + n * x * x
+            sxy = sxy + n * x * y
+            used = used + 1
+        }
+    }
+    c.deaths = deaths
+    c.bins_used = used
+    c.omega2 = 0.0
+    if used >= 3 {
+        let slope: f64 = (sw * sxy - sx * sy) / (sw * sxx - sx * sx)
+        if slope < 0.0 {
+            c.omega2 = -1.0 / (2.0 * slope)
+        }
+    }
+}
+
+# Mean offspring per death in bin b, for reporting.
+export function cal_bin_lrs(w: ptr<World>, b: i32) -> f64 {
+    if w.cal_n[b] <= 0.0 { return 0.0 }
+    return w.cal_kids[b] / w.cal_n[b]
+}

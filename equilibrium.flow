@@ -1,0 +1,303 @@
+# Attractors, and starting on them.
+#
+#   1 calibrate  run the agents from a cold start and measure selection
+#                strength omega2, dispersal sigma2, generation time and the
+#                density profile across latitude
+#   2 solve      integrate the mean-field models to their fixed points: the
+#                thermal cline and mutation-selection balance
+#   3 cold       the agents from a cold start (8 founder clusters)
+#   4 warm       the agents from the attractor (sim/warmstart.flow)
+#
+# Both runs are scored against the attractor every 500 ticks: RMS distance
+# between the agents' mean genotypic thermal optimum and the mean-field
+# cline across 64 latitude bands, and the mean deleterious burden against
+# the predicted one. Results go to out/eq_series.tsv, out/eq_cline.tsv and
+# out/eq_loci.tsv.
+#
+# Run: ./run.sh equilibrium      (about two minutes)
+
+import "stdlib/experiment.flow"
+import gsim.config
+import gsim.state
+import gsim.genome
+import gsim.step
+import gsim.stats
+import gsim.params
+import gsim.calibrate
+import gsim.meanfield
+import gsim.warmstart
+import gsim.textbuf
+
+extern {
+    function sqrt(x: f64) -> f64
+    function getenv(name: string) -> ptr<u8>
+    function atoi(s: ptr<u8>) -> i32
+}
+
+const CAL_WINDOW: i32 = 6000
+const SAMPLE_EVERY: i32 = 500
+
+function env_int(name: string, fallback: i32) -> i32 {
+    let v: ptr<u8> = getenv(name)
+    if v == null { return fallback }
+    return atoi(v)
+}
+
+function secs_since(t0: i64) -> f64 {
+    return ((xp_now_ns() - t0) as f64) / 1000000000.0
+}
+
+# Mean genotypic thermal optimum per mean-field band.
+function agent_cline(w: ptr<World>, out: ptr<f64>, cnt: ptr<f64>) -> void {
+    for b in 0 to MF_BANDS {
+        out[b] = 0.0
+        cnt[b] = 0.0
+    }
+    let rows: i32 = WORLD_H / MF_BANDS
+    for i in 0 to w.n {
+        let b: i32 = ((w.py[i] as i32) & (WORLD_H - 1)) / rows
+        out[b] = out[b] + (w.gtopt[i] as f64)
+        cnt[b] = cnt[b] + 1.0
+    }
+    for b in 0 to MF_BANDS {
+        if cnt[b] > 0.0 { out[b] = out[b] / cnt[b] }
+    }
+}
+
+function cline_rms(m: ptr<MeanField>, prof: ptr<f64>) -> f64 {
+    let mut s: f64 = 0.0
+    for b in 0 to MF_BANDS {
+        let d: f64 = prof[b] - mf_zbar(m, b)
+        s = s + d * d
+    }
+    return sqrt(s / (MF_BANDS as f64))
+}
+
+function mean_burden(w: ptr<World>) -> f64 {
+    let mut s: f64 = 0.0
+    for i in 0 to w.n {
+        s = s + (gen_burden(w.genome, i * GENOME_WORDS) as f64)
+    }
+    return s / (w.n as f64)
+}
+
+function locus_freq(w: ptr<World>, l: i32) -> f64 {
+    let mut c: f64 = 0.0
+    for i in 0 to w.n {
+        c = c + (allele_dosage(w.genome, i * GENOME_WORDS, l) as f64)
+    }
+    return c / (2.0 * (w.n as f64))
+}
+
+struct Track {
+    rms: ptr<f64>,
+    burden: ptr<f64>,
+    final_prof: ptr<f64>,
+    secs: f64
+}
+
+function track_new(samples: i32) -> Track {
+    return Track {
+        rms: alloc_f64(samples as i64),
+        burden: alloc_f64(samples as i64),
+        final_prof: alloc_f64(MF_BANDS as i64),
+        secs: 0.0
+    }
+}
+
+function run_tracked(w: ptr<World>, m: ptr<MeanField>, ticks: i32, tr: ptr<Track>, label: string) -> void {
+    let prof: ptr<f64> = alloc_f64(MF_BANDS as i64)
+    let cnt: ptr<f64> = alloc_f64(MF_BANDS as i64)
+    let t0: i64 = xp_now_ns()
+    let samples: i32 = ticks / SAMPLE_EVERY + 1
+    for k in 0 to samples {
+        if k > 0 {
+            for t in 0 to SAMPLE_EVERY {
+                sim_step(w)
+            }
+        }
+        agent_cline(w, prof, cnt)
+        tr.rms[k] = cline_rms(m, prof)
+        tr.burden[k] = mean_burden(w)
+        if k % 8 == 0 {
+            printf("  %-5s tick %6d  n %6d  cline RMS %.4f  burden %.3f\n",
+                   label, k * SAMPLE_EVERY, w.n, tr.rms[k], tr.burden[k])
+        }
+    }
+    for b in 0 to MF_BANDS {
+        tr.final_prof[b] = prof[b]
+    }
+    tr.secs = secs_since(t0)
+}
+
+# First sample index from which a series stays at or below a threshold.
+function settle_index(x: ptr<f64>, samples: i32, threshold: f64) -> i32 {
+    let mut idx: i32 = samples
+    let mut k: i32 = samples - 1
+    while k >= 0 and x[k] <= threshold {
+        idx = k
+        k = k - 1
+    }
+    return idx
+}
+
+function main() -> i32 {
+    let seed: u32 = params_seed(20261013 as u32)
+    let ticks: i32 = env_int("GW_EQ_TICKS", 24000)
+    let warmup: i32 = env_int("GW_CAL_WARMUP", 2000)
+    let samples: i32 = ticks / SAMPLE_EVERY + 1
+
+    printf("1 calibrate: cold start, %d ticks warm-up, %d ticks measured\n", warmup, CAL_WINDOW)
+    let t_cal: i64 = xp_now_ns()
+    let mut wc: World = sim_init(seed + (1 as u32))
+    for t in 0 to warmup {
+        sim_step(&wc)
+    }
+    let mut cal: Calibration = cal_new()
+    cal_start(&wc, &cal)
+    for t in 0 to CAL_WINDOW {
+        sim_step(&wc)
+        cal_sample(&wc, &cal)
+    }
+    cal_finish(&wc, &cal)
+    printf("  omega2 %.4f from %d bins (%.0f deaths)   sigma2 %.1f cells^2/gen   gen time %.0f ticks   mean n %.0f   %.1f s\n",
+           cal.omega2, cal.bins_used, cal.deaths, cal.sigma2, cal.gen_time, cal.mean_n, secs_since(t_cal))
+    for b in 0 to CAL_BINS {
+        if wc.cal_n[b] >= 300.0 {
+            printf("    |theta - P| %.3f-%.3f  deaths %7.0f  mean offspring %.3f\n",
+                   (b as f64) * (CAL_STEP as f64), ((b + 1) as f64) * (CAL_STEP as f64),
+                   wc.cal_n[b], cal_bin_lrs(&wc, b))
+        }
+    }
+    if cal.omega2 <= 0.0 {
+        printf("FAIL calibration did not find stabilising selection\n")
+        return 1
+    }
+
+    printf("2 solve the attractors\n")
+    let mut w: World = sim_init(seed)
+    let mut m: MeanField = mf_new()
+    let t_mf: i64 = xp_now_ns()
+    mf_setup(&m, &w.arch, cal.omega2, cal.sigma2, cal.density, 0.0)
+    mf_solve_cline(&m, 0.0000001, 2000000)
+    let cline_ms: f64 = secs_since(t_mf) * 1000.0
+    let t_pg: i64 = xp_now_ns()
+    mf_solve_purge(&m, &w.arch, 0.000000001)
+    let purge_ms: f64 = secs_since(t_pg) * 1000.0
+    printf("  cline with linkage disequilibrium: %d steps, residual %.2e per generation, %.1f ms\n", m.iterations, m.residual, cline_ms)
+    let mut mle: MeanField = mf_new()
+    mf_setup(&mle, &w.arch, cal.omega2, cal.sigma2, cal.density, 0.0)
+    mle.ld = false
+    mf_solve_cline(&mle, 0.0000001, 2000000)
+    printf("  cline at linkage equilibrium: %d steps\n", mle.iterations)
+    # The attractor against the calibration run's own cline at the moment
+    # calibration ended: does it describe the state it was measured from?
+    let cprof: ptr<f64> = alloc_f64(MF_BANDS as i64)
+    let ccnt: ptr<f64> = alloc_f64(MF_BANDS as i64)
+    agent_cline(&wc, cprof, ccnt)
+    printf("  calibration run at tick %d vs attractor RMS: with LD %.4f, linkage equilibrium %.4f\n",
+           warmup + CAL_WINDOW, cline_rms(&m, cprof), cline_rms(&mle, cprof))
+    printf("  purge: 16 Flow models, predicted burden %.3f alleles per genome, %.1f ms\n", mf_burden(&m), purge_ms)
+
+    printf("3 cold start, %d ticks\n", ticks)
+    let mut cold: Track = track_new(samples)
+    run_tracked(&w, &m, ticks, &cold, "cold")
+    let cold_final_burden: f64 = cold.burden[samples - 1]
+
+    printf("4 warm start on the attractor, %d ticks\n", ticks)
+    let mut ww: World = sim_init(seed)
+    pop_found_attractor(&ww, &m, cal.mean_n as i32)
+    let mut warm: Track = track_new(samples)
+    run_tracked(&ww, &m, ticks, &warm, "warm")
+
+    # Noise floor of the cline score: the warm run's mean over its second half.
+    let mut floor: f64 = 0.0
+    let half: i32 = samples / 2
+    for k in half to samples {
+        floor = floor + warm.rms[k]
+    }
+    floor = floor / ((samples - half) as f64)
+    let pred: f64 = mf_burden(&m)
+    let mut wb: f64 = 0.0
+    for k in half to samples {
+        wb = wb + warm.burden[k]
+    }
+    wb = wb / ((samples - half) as f64)
+    let rms_threshold: f64 = 1.25 * floor
+    let cold_cline_at: i32 = settle_index(cold.rms, samples, rms_threshold)
+    let warm_cline_at: i32 = settle_index(warm.rms, samples, rms_threshold)
+
+    printf("\nResults\n")
+    printf("  cline RMS from attractor, warm run second half (noise floor): %.4f\n", floor)
+    printf("  cline settles within 1.25 x floor: cold at tick %d, warm at tick %d\n",
+           cold_cline_at * SAMPLE_EVERY, warm_cline_at * SAMPLE_EVERY)
+    printf("  burden: predicted %.3f, warm run second half %.3f, cold run at tick %d %.3f (%.0f%% of predicted)\n",
+           pred, wb, ticks, cold_final_burden, 100.0 * cold_final_burden / pred)
+    let g90: f64 = mf_purge_time_to(&m, &w.arch, 0.9)
+    let pred_cold: f64 = mf_purge_transient(&w.arch, (ticks as f64) / cal.gen_time)
+    printf("  burden, cold start: agents %.3f at tick %d, Purge transient from q = 0 predicts %.3f\n",
+           cold_final_burden, ticks, pred_cold)
+    printf("  a cold start needs %.0f generations (%.0f ticks) to reach 90%% of balance; at this run's speed that is %.0f s\n",
+           g90, g90 * cal.gen_time, g90 * cal.gen_time * cold.secs / (ticks as f64))
+    printf("  final agent cline vs attractor RMS: with LD cold %.4f warm %.4f, linkage equilibrium cold %.4f warm %.4f\n",
+           cline_rms(&m, cold.final_prof), cline_rms(&m, warm.final_prof),
+           cline_rms(&mle, cold.final_prof), cline_rms(&mle, warm.final_prof))
+    printf("  wall time: cold %.1f s, warm %.1f s, attractor solve %.1f ms\n",
+           cold.secs, warm.secs, cline_ms + purge_ms)
+
+    # Tables for the write-up.
+    let mut t: TextBuf = tb_new(1 << 16)
+    tb_str(&t, "tick\tcold_cline_rms\twarm_cline_rms\tcold_burden\twarm_burden\tpredicted_burden\tpredicted_cold_burden\n")
+    for k in 0 to samples {
+        tb_u64(&t, (k * SAMPLE_EVERY) as i64)
+        tb_tab(&t)
+        tb_fixed(&t, cold.rms[k], 5)
+        tb_tab(&t)
+        tb_fixed(&t, warm.rms[k], 5)
+        tb_tab(&t)
+        tb_fixed(&t, cold.burden[k], 4)
+        tb_tab(&t)
+        tb_fixed(&t, warm.burden[k], 4)
+        tb_tab(&t)
+        tb_fixed(&t, pred, 4)
+        tb_tab(&t)
+        tb_fixed(&t, mf_purge_transient(&w.arch, ((k * SAMPLE_EVERY) as f64) / cal.gen_time), 4)
+        tb_nl(&t)
+    }
+    let ok1: bool = tb_save(&t, params_out_dir() + "/eq_series.tsv")
+    tb_clear(&t)
+    tb_str(&t, "band\tlatitude_row\ttheta\tattractor_ld\tattractor_le\tcold_final\twarm_final\n")
+    for b in 0 to MF_BANDS {
+        tb_u64(&t, b as i64)
+        tb_tab(&t)
+        tb_u64(&t, (b * (WORLD_H / MF_BANDS) + WORLD_H / (2 * MF_BANDS)) as i64)
+        tb_tab(&t)
+        tb_fixed(&t, m.theta[b], 4)
+        tb_tab(&t)
+        tb_fixed(&t, mf_zbar(&m, b), 4)
+        tb_tab(&t)
+        tb_fixed(&t, mf_zbar(&mle, b), 4)
+        tb_tab(&t)
+        tb_fixed(&t, cold.final_prof[b], 4)
+        tb_tab(&t)
+        tb_fixed(&t, warm.final_prof[b], 4)
+        tb_nl(&t)
+    }
+    let ok2: bool = tb_save(&t, params_out_dir() + "/eq_cline.tsv")
+    tb_clear(&t)
+    tb_str(&t, "locus\ts\tpredicted_q\tcold_q\twarm_q\n")
+    for k in 0 to MF_LOCI {
+        tb_u64(&t, (LOCUS_DEL + k) as i64)
+        tb_tab(&t)
+        tb_fixed(&t, w.arch.sel[LOCUS_DEL + k] as f64, 5)
+        tb_tab(&t)
+        tb_fixed(&t, m.q[k], 5)
+        tb_tab(&t)
+        tb_fixed(&t, locus_freq(&w, LOCUS_DEL + k), 5)
+        tb_tab(&t)
+        tb_fixed(&t, locus_freq(&ww, LOCUS_DEL + k), 5)
+        tb_nl(&t)
+    }
+    let ok3: bool = tb_save(&t, params_out_dir() + "/eq_loci.tsv")
+    return 0
+}

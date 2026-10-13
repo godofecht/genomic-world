@@ -63,6 +63,16 @@ const DEFAULT_ENV_SD: f32 = 0.1
 const FOUNDER_GROUPS: i32 = 8
 const FOUNDERS_PER_GROUP: i32 = 700
 
+# Selection calibration: bins of |theta - P| at the birthplace, CAL_STEP wide.
+const CAL_BINS: i32 = 24
+const CAL_STEP: f32 = 0.025
+
+# Stabilising selection width on thermal optimum, per generation, measured
+# by ./run.sh equilibrium at default parameters (sim/calibrate.flow).
+const CAL_OMEGA2: f64 = 0.040
+# Dispersal variance per generation to assume before any births are seen.
+const CAL_SIGMA2: f64 = 400.0
+
 # Statistics.
 const LAT_BANDS: i32 = 32
 const HIST_LEN: i32 = 256

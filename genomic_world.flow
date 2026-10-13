@@ -27,6 +27,7 @@ import gsim.world
 import gsim.canvas
 import gsim.render
 import gsim.sampling
+import gsim.warmstart
 
 const STATS_EVERY: i32 = 4
 const HIST_EVERY: i32 = 16
@@ -80,6 +81,10 @@ function main() -> i32 {
             world_seed = world_seed * (1664525 as u32) + (1013904223 as u32)
             sim_reseed(&w, world_seed)
             stats_reset_history(&s)
+        }
+        if pressed(g, &keys, 13, KEY_A) {
+            sim_jump_to_attractor(&w)
+            stats_compute(&s, &w)
         }
         if pressed(g, &keys, 12, KEY_E) {
             stats_compute(&s, &w)

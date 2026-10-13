@@ -10,6 +10,7 @@ import .world
 extern {
     function cosf(x: f32) -> f32
     function sinf(x: f32) -> f32
+    function sqrtf(x: f32) -> f32
 }
 
 function clamp01(v: f32) -> f32 {
@@ -93,6 +94,7 @@ export function pop_found(w: ptr<World>) -> void {
                 w.bx[i] = x
                 w.by[i] = y
                 w.mid[i] = -1.0
+                w.kids[i] = 0.0
                 w.hd[i] = rng_unit(&st) * 6.2831853
                 w.age[i] = rng_below(&st, MATURE_AGE * 3)
                 w.cd[i] = 0
@@ -140,6 +142,28 @@ export function pop_index(w: ptr<World>) -> void {
     }
 }
 
+# Lifetime reproductive success of each individual dying this tick, binned
+# by |theta - P|: its thermal phenotype against the seasonal-mean
+# temperature at its birthplace. A fixed environment per individual keeps
+# lifespan from leaking into the mismatch measure.
+function record_deaths(w: ptr<World>, total: i32) -> void {
+    let shift: f32 = w.climate.warming as f32
+    for i in 0 to total {
+        if w.slot_dst[i] < 0 {
+            let lat: f32 = (((w.by[i] as i32) & (WORLD_H - 1)) as f32 + 0.5) / (WORLD_H as f32)
+            let theta: f32 = 0.5 - 0.42 * cosf(6.2831853 * lat) + shift
+            let d: f32 = theta - w.topt[i]
+            let d2: f32 = d * d
+            let bin: i32 = (sqrtf(d2) / CAL_STEP) as i32
+            if bin < CAL_BINS {
+                w.cal_n[bin] = w.cal_n[bin] + 1.0
+                w.cal_kids[bin] = w.cal_kids[bin] + (w.kids[i] as f64)
+                w.cal_d2[bin] = w.cal_d2[bin] + (d2 as f64)
+            }
+        }
+    }
+}
+
 # Remove the dead and pack survivors to the front, keeping their order.
 #
 # A serial pass assigns each survivor its destination slot. A parallel pass
@@ -168,6 +192,9 @@ export function pop_compact(w: ptr<World>, total: i32) -> void {
             out = out + 1
         }
     }
+    if w.cal_on {
+        record_deaths(w, total)
+    }
     w.starved = w.starved + starved
     w.old_age = w.old_age + old
     w.killed = w.killed + killed
@@ -192,6 +219,7 @@ export function pop_compact(w: ptr<World>, total: i32) -> void {
     let bx: ptr<f32> = w.bx
     let by: ptr<f32> = w.by
     let viab: ptr<f32> = w.viab
+    let kids: ptr<f32> = w.kids
     let g: ptr<u32> = w.genome
     let bg: ptr<u32> = b.genome
     parallel for i in 0 to total {
@@ -216,6 +244,7 @@ export function pop_compact(w: ptr<World>, total: i32) -> void {
             b.bx[d] = bx[i]
             b.by[d] = by[i]
             b.viab[d] = viab[i]
+            b.kids[d] = kids[i]
             let sb: i32 = i * GENOME_WORDS
             let db: i32 = d * GENOME_WORDS
             for k in 0 to GENOME_WORDS {
@@ -232,7 +261,8 @@ function swap_buffers(w: ptr<World>) -> void {
         px: w.px, py: w.py, hd: w.hd, en: w.en, age: w.age, cd: w.cd,
         seed_of: w.seed_of, topt: w.topt, spd: w.spd, size: w.size,
         thr: w.thr, sense: w.sense, load: w.load, col: w.col, genome: w.genome,
-        gtopt: w.gtopt, mid: w.mid, bx: w.bx, by: w.by, viab: w.viab
+        gtopt: w.gtopt, mid: w.mid, bx: w.bx, by: w.by, viab: w.viab,
+        kids: w.kids
     }
     w.px = b.px
     w.py = b.py
@@ -254,4 +284,5 @@ function swap_buffers(w: ptr<World>) -> void {
     w.bx = b.bx
     w.by = b.by
     w.viab = b.viab
+    w.kids = b.kids
 }

@@ -8,6 +8,8 @@
 #                       determinism check
 #   ./run.sh validate   genetic engine against population-genetic theory
 #   ./run.sh export     run 3000 ticks, write a VCF sample to out/
+#   ./run.sh equilibrium  calibrate, solve the attractors, compare cold and
+#                       warm starts
 #
 # OpenMP: Apple clang only links it when libomp's headers and library are on
 # the search paths. Without libomp the parallel loops compile serial and the
@@ -67,12 +69,16 @@ case "${1:-gfx}" in
         mkdir -p out
         flow run validate.flow 2>&1 | quiet
         ;;
+    equilibrium)
+        mkdir -p out
+        flow run equilibrium.flow 2>&1 | quiet
+        ;;
     export)
         mkdir -p out
         flow run export_run.flow 2>&1 | quiet
         ;;
     *)
-        echo "usage: $0 [gfx|record N [stride]|bench|test|validate|export]" >&2
+        echo "usage: $0 [gfx|record N [stride]|bench|test|validate|export|equilibrium]" >&2
         exit 2
         ;;
 esac

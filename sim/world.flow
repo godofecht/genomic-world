@@ -42,7 +42,8 @@ export function agents_alloc() -> Agents {
         mid: alloc_f32(nm),
         bx: alloc_f32(nm),
         by: alloc_f32(nm),
-        viab: alloc_f32(nm)
+        viab: alloc_f32(nm),
+        kids: alloc_f32(nm)
     }
 }
 
@@ -85,6 +86,7 @@ export function world_alloc(seed: u32) -> World {
         bx: a.bx,
         by: a.by,
         viab: a.viab,
+        kids: a.kids,
         back: agents_alloc(),
         slot_dst: alloc_i32(nm),
         cell_of: alloc_i32(nm),
@@ -100,7 +102,13 @@ export function world_alloc(seed: u32) -> World {
         next_seed: seed,
         gen_time: 0.0,
         disp2: 0.0,
-        land_cells: 0
+        disp2_x: 0.0,
+        disp2_y: 0.0,
+        land_cells: 0,
+        cal_on: false,
+        cal_n: alloc_f64(CAL_BINS as i64),
+        cal_kids: alloc_f64(CAL_BINS as i64),
+        cal_d2: alloc_f64(CAL_BINS as i64)
     }
     return w
 }
