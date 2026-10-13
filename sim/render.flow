@@ -1,0 +1,377 @@
+# Drawing the world and the genetics panel into a Canvas.
+#
+# Views
+#   0 ANCESTRY   agents in marker colour; hybrids blend their parents
+#   1 CLIMATE    background is temperature, agents are coloured by their
+#                genetic thermal optimum on the same scale; a well adapted
+#                agent disappears into its background
+#   2 FOOD       the resource field, agents as dim points
+#   3 LOAD       deleterious alleles carried, green clean to red heavy
+
+import .config
+import .state
+import .world
+import .stats
+import .genome
+import .canvas
+
+const SCALE: i32 = 3
+const VIEW_PX: i32 = 768
+const PANEL_X: i32 = 784
+const PANEL_W: i32 = 392
+const WIN_W: i32 = 1192
+const WIN_H: i32 = 768
+
+const VIEW_ANCESTRY: i32 = 0
+const VIEW_CLIMATE: i32 = 1
+const VIEW_FOOD: i32 = 2
+const VIEW_LOAD: i32 = 3
+
+struct Ui {
+    view: i32,
+    steps: i32,
+    paused: bool,
+    mu_level: i32
+}
+
+export function view_name(v: i32) -> string {
+    if v == VIEW_CLIMATE { return "CLIMATE" }
+    if v == VIEW_FOOD { return "FOOD" }
+    if v == VIEW_LOAD { return "LOAD" }
+    return "ANCESTRY"
+}
+
+function clamp255(v: f32) -> i32 {
+    if v < 0.0 { return 0 }
+    if v > 255.0 { return 255 }
+    return v as i32
+}
+
+# Temperature scale shared by background and agents: blue, pale, red.
+function heat_r(t: f32) -> i32 {
+    let u: f32 = t / 1.2
+    return clamp255(30.0 + 225.0 * u)
+}
+function heat_g(t: f32) -> i32 {
+    let mut u: f32 = t / 1.2
+    if u < 0.0 { u = 0.0 }
+    if u > 1.0 { u = 1.0 }
+    let mut m: f32 = 2.0 * u - 1.0
+    if m < 0.0 { m = 0.0 - m }
+    return clamp255(60.0 + 170.0 * (1.0 - m))
+}
+function heat_b(t: f32) -> i32 {
+    let u: f32 = t / 1.2
+    return clamp255(255.0 - 225.0 * u)
+}
+
+function draw_cells(cv: Canvas, w: ptr<World>, view: i32) -> void {
+    let food: ptr<f32> = w.food
+    let terrain: ptr<u8> = w.terrain
+    let temp_row: ptr<f32> = w.temp_row
+    let open: bool = w.passes_open
+    let pix: ptr<u8> = cv.px
+    let stride: i32 = cv.w * 3
+    parallel for y in 0 to WORLD_H {
+        let t: f32 = temp_row[y]
+        for x in 0 to WORLD_W {
+            let c: i32 = y * WORLD_W + x
+            let f: f32 = food[c]
+            let tr: u8 = terrain[c]
+            let mut r: i32 = 0
+            let mut g: i32 = 0
+            let mut b: i32 = 0
+            if tr == TERRAIN_RIDGE {
+                r = 70
+                g = 64
+                b = 60
+            } elif tr == TERRAIN_PASS and !open {
+                r = 130
+                g = 46
+                b = 40
+            } elif view == VIEW_CLIMATE {
+                r = (heat_r(t) * 38) / 100
+                g = (heat_g(t) * 38) / 100
+                b = (heat_b(t) * 38) / 100
+            } elif view == VIEW_FOOD {
+                r = clamp255(10.0 + 40.0 * f)
+                g = clamp255(16.0 + 210.0 * f)
+                b = clamp255(14.0 + 70.0 * f)
+            } else {
+                r = clamp255(12.0 + 18.0 * f)
+                g = clamp255(14.0 + 30.0 * f)
+                b = clamp255(16.0 + 16.0 * f)
+            }
+            if tr == TERRAIN_PASS and open {
+                r = 92
+                g = 80
+                b = 54
+            }
+            for sy in 0 to SCALE {
+                let mut o: i32 = (y * SCALE + sy) * stride + x * SCALE * 3
+                for sx in 0 to SCALE {
+                    pix[o] = r as u8
+                    pix[o + 1] = g as u8
+                    pix[o + 2] = b as u8
+                    o = o + 3
+                }
+            }
+        }
+    }
+}
+
+function draw_agents(cv: Canvas, w: ptr<World>, view: i32) -> void {
+    let pix: ptr<u8> = cv.px
+    let stride: i32 = cv.w * 3
+    for i in 0 to w.n {
+        let x: i32 = (w.px[i] * (SCALE as f32)) as i32
+        let y: i32 = (w.py[i] * (SCALE as f32)) as i32
+        let mut r: i32 = 0
+        let mut g: i32 = 0
+        let mut b: i32 = 0
+        let mut sz: i32 = 2
+        if view == VIEW_CLIMATE {
+            let o: f32 = w.topt[i]
+            r = heat_r(o)
+            g = heat_g(o)
+            b = heat_b(o)
+        } elif view == VIEW_FOOD {
+            r = 150
+            g = 150
+            b = 160
+            sz = 1
+        } elif view == VIEW_LOAD {
+            let k: i32 = gen_burden(w.genome, i * GENOME_WORDS)
+            let mut u: f32 = (k as f32) / 6.0
+            if u > 1.0 { u = 1.0 }
+            r = clamp255(60.0 + 195.0 * u)
+            g = clamp255(210.0 - 150.0 * u)
+            b = clamp255(150.0 - 110.0 * u)
+            if w.load[i] > 0 {
+                r = 255
+                g = 60
+                b = 220
+            }
+        } else {
+            let c: u32 = w.col[i]
+            r = ((c >> 16) & (255 as u32)) as i32
+            g = ((c >> 8) & (255 as u32)) as i32
+            b = (c & (255 as u32)) as i32
+        }
+        for sy in 0 to sz {
+            for sx in 0 to sz {
+                let xx: i32 = x + sx
+                let yy: i32 = y + sy
+                if xx < VIEW_PX and yy < VIEW_PX {
+                    let o: i32 = yy * stride + xx * 3
+                    pix[o] = r as u8
+                    pix[o + 1] = g as u8
+                    pix[o + 2] = b as u8
+                }
+            }
+        }
+    }
+}
+
+# Colour of the locus block a locus belongs to, for the allele strip.
+function locus_color_r(l: i32) -> i32 {
+    if l < 16 { return 240 }
+    if l < 32 { return 230 }
+    if l < 48 { return 70 }
+    if l < 64 { return 110 }
+    if l < 80 { return 170 }
+    if l < 96 { return 200 }
+    if l < 106 { return 230 }
+    if l < 116 { return 70 }
+    if l < 126 { return 80 }
+    return 120
+}
+function locus_color_g(l: i32) -> i32 {
+    if l < 16 { return 120 }
+    if l < 32 { return 210 }
+    if l < 48 { return 200 }
+    if l < 64 { return 210 }
+    if l < 80 { return 110 }
+    if l < 96 { return 70 }
+    if l < 106 { return 70 }
+    if l < 116 { return 210 }
+    if l < 126 { return 110 }
+    return 120
+}
+function locus_color_b(l: i32) -> i32 {
+    if l < 16 { return 60 }
+    if l < 32 { return 80 }
+    if l < 48 { return 230 }
+    if l < 64 { return 110 }
+    if l < 80 { return 230 }
+    if l < 96 { return 70 }
+    if l < 106 { return 70 }
+    if l < 116 { return 90 }
+    if l < 126 { return 240 }
+    return 120
+}
+
+const DIM_R: i32 = 128
+const DIM_G: i32 = 122
+const DIM_B: i32 = 112
+const INK_R: i32 = 236
+const INK_G: i32 = 230
+const INK_B: i32 = 218
+
+function label(cv: Canvas, x: i32, y: i32, s: string) -> i32 {
+    return cv_text(cv, x, y, s, DIM_R, DIM_G, DIM_B)
+}
+
+function allele_strip(cv: Canvas, s: ptr<Stats>, x0: i32, y0: i32) -> void {
+    let h: i32 = 56
+    cv_rect(cv, x0, y0, 384, h, 22, 22, 26)
+    for l in 0 to LOCI {
+        let bh: i32 = (s.freq[l] * (h as f32) + 0.5) as i32
+        cv_rect(cv, x0 + l * 3, y0 + h - bh, 2, bh,
+                locus_color_r(l), locus_color_g(l), locus_color_b(l))
+    }
+    # half-frequency guide
+    cv_rect(cv, x0, y0 + h / 2, 384, 1, 60, 60, 66)
+    let y1: i32 = y0 + h + 4
+    let a: i32 = cv_text(cv, x0, y1, "TOPT", 240, 120, 60)
+    let b: i32 = cv_text(cv, x0 + 48, y1, "SPD", 230, 210, 80)
+    let c: i32 = cv_text(cv, x0 + 96, y1, "SNS", 70, 200, 230)
+    let d: i32 = cv_text(cv, x0 + 144, y1, "SIZE", 110, 210, 110)
+    let e: i32 = cv_text(cv, x0 + 192, y1, "REPR", 170, 110, 230)
+    let f: i32 = cv_text(cv, x0 + 240, y1, "LOAD", 200, 70, 70)
+    let g: i32 = cv_text(cv, x0 + 288, y1, "MARKERS", 200, 200, 200)
+}
+
+function cline_plot(cv: Canvas, s: ptr<Stats>, x0: i32, y0: i32) -> void {
+    let h: i32 = 96
+    cv_rect(cv, x0, y0, 384, h, 22, 22, 26)
+    let bw: i32 = 384 / LAT_BANDS
+    for b in 0 to LAT_BANDS {
+        let x: i32 = x0 + b * bw
+        if s.band_n[b] > 0 {
+            let v: f32 = s.band_topt[b]
+            let bh: i32 = (v / 1.3 * (h as f32)) as i32
+            cv_rect(cv, x + 1, y0 + h - bh, bw - 2, bh, heat_r(v), heat_g(v), heat_b(v))
+        }
+        let t: f32 = s.band_temp[b]
+        let mut ty: i32 = y0 + h - ((t / 1.3 * (h as f32)) as i32)
+        if ty < y0 { ty = y0 }
+        if ty > y0 + h - 2 { ty = y0 + h - 2 }
+        cv_rect(cv, x, ty, bw, 2, 250, 250, 250)
+    }
+    let a: i32 = label(cv, x0, y0 + h + 4, "COLD")
+    let b2: i32 = label(cv, x0 + 168, y0 + h + 4, "HOT")
+    let c: i32 = label(cv, x0 + 360, y0 + h + 4, "COLD")
+}
+
+function sparkline(cv: Canvas, s: ptr<Stats>, data: ptr<f32>, x0: i32, y0: i32,
+                   name: string, current: f32, decimals: i32, lo: f32, hi: f32,
+                   r: i32, g: i32, b: i32) -> void {
+    let h: i32 = 34
+    let a: i32 = label(cv, x0, y0, name)
+    let v: i32 = cv_fixed(cv, x0 + 330, y0, current, decimals, INK_R, INK_G, INK_B)
+    let top: i32 = y0 + 10
+    cv_rect(cv, x0, top, 384, h, 22, 22, 26)
+    let n: i32 = s.hist_count
+    if n < 2 { return }
+    let span: f32 = hi - lo
+    for k in 0 to n {
+        let idx: i32 = (s.hist_head - n + k + HIST_LEN) % HIST_LEN
+        let mut u: f32 = (data[idx] - lo) / span
+        if u < 0.0 { u = 0.0 }
+        if u > 1.0 { u = 1.0 }
+        let x: i32 = x0 + (k * 384) / HIST_LEN
+        let y: i32 = top + h - 1 - ((u * ((h - 2) as f32)) as i32)
+        cv_rect(cv, x, y, 2, 2, r, g, b)
+    }
+}
+
+function stat_line(cv: Canvas, x: i32, y: i32, name: string, v: f32, decimals: i32) -> void {
+    let a: i32 = label(cv, x, y, name)
+    let b: i32 = cv_fixed(cv, x + 72, y, v, decimals, INK_R, INK_G, INK_B)
+}
+
+function draw_panel(cv: Canvas, w: ptr<World>, s: ptr<Stats>, ui: Ui) -> void {
+    let x0: i32 = PANEL_X
+    cv_rect(cv, VIEW_PX, 0, WIN_W - VIEW_PX, WIN_H, 14, 14, 17)
+    let t0: i32 = cv_text(cv, x0, 10, "GENOMIC WORLD", 250, 196, 110)
+    let t1: i32 = label(cv, x0 + 96, 10, "DIPLOID  4 CHROMOSOMES  128 LOCI")
+
+    let mut y: i32 = 28
+    let a: i32 = label(cv, x0, y, "TICK")
+    let b: i32 = cv_int(cv, x0 + 30, y, w.tick as i32, INK_R, INK_G, INK_B)
+    let c: i32 = label(cv, x0 + 96, y, "POP")
+    let d: i32 = cv_int(cv, x0 + 120, y, w.n, INK_R, INK_G, INK_B)
+    let e: i32 = label(cv, x0 + 180, y, "VIEW")
+    let f: i32 = cv_text(cv, x0 + 210, y, view_name(ui.view), 250, 196, 110)
+    if ui.paused {
+        let g: i32 = cv_text(cv, x0 + 330, y, "PAUSED", 255, 110, 110)
+    }
+    y = y + 12
+    let h1: i32 = label(cv, x0, y, "BIRTHS")
+    let h2: i32 = cv_int(cv, x0 + 42, y, w.births, INK_R, INK_G, INK_B)
+    let h3: i32 = label(cv, x0 + 96, y, "STILLBORN")
+    let h4: i32 = cv_int(cv, x0 + 156, y, w.stillborn, INK_R, INK_G, INK_B)
+    let h5: i32 = label(cv, x0 + 210, y, "STARVED")
+    let h6: i32 = cv_int(cv, x0 + 258, y, w.starved, INK_R, INK_G, INK_B)
+    y = y + 12
+    let m1: i32 = label(cv, x0, y, "MU")
+    let m2: i32 = cv_fixed(cv, x0 + 18, y, w.mu * 10000.0, 1, INK_R, INK_G, INK_B)
+    let m3: i32 = label(cv, m2 + 4, y, "E-4")
+    let m4: i32 = label(cv, x0 + 96, y, "WARMING")
+    let m5: i32 = cv_fixed(cv, x0 + 144, y, w.climate.warming as f32, 3, INK_R, INK_G, INK_B)
+    let m6: i32 = label(cv, x0 + 210, y, "PASSES")
+    if w.passes_open {
+        let m7: i32 = cv_text(cv, x0 + 252, y, "OPEN", 140, 220, 140)
+    } else {
+        let m8: i32 = cv_text(cv, x0 + 252, y, "CLOSED", 255, 110, 100)
+    }
+    let m9: i32 = label(cv, x0 + 300, y, "STEPS")
+    let ma: i32 = cv_int(cv, x0 + 336, y, ui.steps, INK_R, INK_G, INK_B)
+
+    y = 74
+    let s1: i32 = cv_text(cv, x0, y, "ALLELE FREQUENCY BY LOCUS", INK_R, INK_G, INK_B)
+    allele_strip(cv, s, x0, y + 12)
+
+    y = 162
+    let s2: i32 = cv_text(cv, x0, y, "THERMAL CLINE  BARS T_OPT  LINE TEMPERATURE", INK_R, INK_G, INK_B)
+    cline_plot(cv, s, x0, y + 12)
+
+    y = 286
+    let s3: i32 = cv_text(cv, x0, y, "MEAN PHENOTYPE", INK_R, INK_G, INK_B)
+    stat_line(cv, x0, y + 12, "T_OPT", s.mean_topt, 3)
+    stat_line(cv, x0, y + 24, "SPEED", s.mean_spd, 3)
+    stat_line(cv, x0, y + 36, "SENSE", s.mean_sense, 2)
+    stat_line(cv, x0 + 196, y + 12, "SIZE", s.mean_size, 3)
+    stat_line(cv, x0 + 196, y + 24, "REPRO", s.mean_repro, 3)
+    stat_line(cv, x0 + 196, y + 36, "MISMATCH", s.mismatch, 3)
+
+    y = 340
+    sparkline(cv, s, s.hist_pop, x0, y, "POPULATION", w.n as f32, 0,
+              0.0, N_MAX as f32 * 0.6, 220, 220, 220)
+    sparkline(cv, s, s.hist_fst, x0, y + 50, "F_ST INNER VS OUTER  30 MARKER LOCI", s.fst, 4,
+              0.0, 0.5, 250, 196, 110)
+    sparkline(cv, s, s.hist_het, x0, y + 100, "MARKER HETEROZYGOSITY 2P(1-P)", s.het, 4,
+              0.0, 0.5, 120, 200, 240)
+    sparkline(cv, s, s.hist_r, x0, y + 150, "ADAPTATION  CORR(T_OPT, LOCAL T)", s.adapt_r, 3,
+              -0.2, 1.0, 240, 130, 70)
+    sparkline(cv, s, s.hist_burden, x0, y + 200, "DELETERIOUS ALLELES PER GENOME", s.mean_burden, 3,
+              0.0, 2.0, 220, 80, 80)
+
+    y = 600
+    let k0: i32 = cv_text(cv, x0, y, "KEYS", INK_R, INK_G, INK_B)
+    let k1: i32 = label(cv, x0, y + 14, "1-4 VIEW    P PAUSE    [ ] STEPS PER FRAME")
+    let k2: i32 = label(cv, x0, y + 26, "B OPEN OR CLOSE THE MOUNTAIN PASSES")
+    let k3: i32 = label(cv, x0, y + 38, "W WARM OR COOL THE CLIMATE")
+    let k4: i32 = label(cv, x0, y + 50, "M MUTATION RATE    X BOTTLENECK 90 PERCENT")
+    let k5: i32 = label(cv, x0, y + 62, "R NEW WORLD    ESC QUIT")
+    let k6: i32 = label(cv, x0, y + 90, "WRITTEN IN FLOW. CLIMATE IS A FLOW MODEL.")
+    let k7: i32 = label(cv, x0, y + 102, "GENOMES ARE BIT-PACKED; MEIOSIS IS")
+    let k8: i32 = label(cv, x0, y + 114, "MASK, SHIFT AND XOR ON 32-BIT WORDS.")
+}
+
+export function render_frame(cv: Canvas, w: ptr<World>, s: ptr<Stats>, ui: Ui) -> void {
+    draw_cells(cv, w, ui.view)
+    draw_agents(cv, w, ui.view)
+    draw_panel(cv, w, s, ui)
+}

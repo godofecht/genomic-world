@@ -1,0 +1,29 @@
+# Bit operations on genome words.
+
+# Number of set bits. SWAR, no branches, no table.
+export function popcount32(v: u32) -> i32 {
+    let a: u32 = v - ((v >> 1) & (0x55555555 as u32))
+    let b: u32 = (a & (0x33333333 as u32)) + ((a >> 2) & (0x33333333 as u32))
+    let c: u32 = (b + (b >> 4)) & (0x0F0F0F0F as u32)
+    return ((c * (0x01010101 as u32)) >> 24) as i32
+}
+
+# Bits 0 to k-1 set. k may be 0 to 32.
+export function low_mask(k: i32) -> u32 {
+    if k <= 0 {
+        return 0 as u32
+    }
+    if k >= 32 {
+        return 0xFFFFFFFF as u32
+    }
+    return ((1 as u32) << (k as u32)) - (1 as u32)
+}
+
+export function invert32(v: u32) -> u32 {
+    return v ^ (0xFFFFFFFF as u32)
+}
+
+# Allele at one bit, 0 or 1.
+export function bit_at(v: u32, b: i32) -> i32 {
+    return ((v >> (b as u32)) & (1 as u32)) as i32
+}

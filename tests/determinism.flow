@@ -1,0 +1,14 @@
+# Prints a hash of the full state after 400 ticks. run.sh test runs this at
+# one thread and at eight and requires the same hash.
+
+import gsim.state
+import gsim.step
+
+function main() -> i32 {
+    let mut w: World = sim_init(31337 as u32)
+    for t in 0 to 400 {
+        sim_step(&w)
+    }
+    printf("hash %u n %d\n", sim_state_hash(&w), w.n)
+    return 0
+}

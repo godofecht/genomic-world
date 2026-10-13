@@ -1,0 +1,10 @@
+[package]
+name = "genomic_sim"
+version = "0.1.0"
+description = "Diploid genomic simulator on a 2D toroidal world"
+entry = "genomic_world.flow"
+
+[paths]
+gsim = "sim"
+
+[dependencies]

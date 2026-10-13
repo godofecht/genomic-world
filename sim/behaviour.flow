@@ -1,0 +1,142 @@
+# Foraging and metabolism.
+#
+# Each tick an agent samples food at its sensing radius in eight directions,
+# heads for the best one, moves at its genetic speed, and pays for it:
+#
+#   cost = basal * size * (1 + load_penalty * load)
+#        + sense_cost * radius
+#        + move_cost * size * speed^2           if it moved
+#        + thermal_cost * size * (T - T_opt)^2
+#
+# The move loop runs in parallel over agents: it reads the food field and
+# writes only the agent's own slots. Feeding runs in parallel over rows of
+# cells: each cell's food is shared only by the agents standing in it.
+
+import .config
+import .state
+import .rng
+import .world
+
+extern {
+    function cosf(x: f32) -> f32
+    function sinf(x: f32) -> f32
+}
+
+const QUARTER_PI: f32 = 0.78539816
+
+export function behave(w: ptr<World>) -> void {
+    let n: i32 = w.n
+    let tick: u32 = w.tick
+    let open: bool = w.passes_open
+    let px: ptr<f32> = w.px
+    let py: ptr<f32> = w.py
+    let hd: ptr<f32> = w.hd
+    let en: ptr<f32> = w.en
+    let age: ptr<i32> = w.age
+    let cd: ptr<i32> = w.cd
+    let seeds: ptr<u32> = w.seed_of
+    let topt: ptr<f32> = w.topt
+    let spd: ptr<f32> = w.spd
+    let size: ptr<f32> = w.size
+    let sense: ptr<i32> = w.sense
+    let load: ptr<i32> = w.load
+    let food: ptr<f32> = w.food
+    let terrain: ptr<u8> = w.terrain
+    let temp_row: ptr<f32> = w.temp_row
+    let thermal_cost: f32 = w.thermal_cost
+    let dx: array<f32, 8> = [1.0, 0.70710678, 0.0, -0.70710678, -1.0, -0.70710678, 0.0, 0.70710678]
+    let dy: array<f32, 8> = [0.0, 0.70710678, 1.0, 0.70710678, 0.0, -0.70710678, -1.0, -0.70710678]
+
+    parallel for i in 0 to n {
+        let mut st: u32 = rng_stream(seeds[i], tick, 1 as u32)
+        let x: f32 = px[i]
+        let y: f32 = py[i]
+        let here: f32 = food[cell_index(x, y)]
+        let r: f32 = sense[i] as f32
+
+        let mut best: f32 = -1.0
+        let mut best_d: i32 = -1
+        for d in 0 to 8 {
+            let sc: i32 = cell_index(wrap_x(x + r * dx[d]), wrap_y(y + r * dy[d]))
+            if passable(terrain, sc, open) {
+                let v: f32 = food[sc] + 0.01 * rng_unit(&st)
+                if v > best {
+                    best = v
+                    best_d = d
+                }
+            }
+        }
+
+        let mut h: f32 = hd[i]
+        let mut go: bool = true
+        if best_d >= 0 and best > here * 1.15 + 0.02 {
+            h = (best_d as f32) * QUARTER_PI + 0.3 * (rng_unit(&st) - 0.5)
+        } elif here > 0.3 {
+            go = false
+        } else {
+            h = h + 0.9 * (rng_unit(&st) - 0.5)
+        }
+
+        let s: f32 = spd[i]
+        let z: f32 = size[i]
+        let mut cost: f32 = BASAL_COST * z * (1.0 + LOAD_PENALTY * (load[i] as f32))
+                          + SENSE_COST * r
+        if go {
+            let nx: f32 = wrap_x(x + s * cosf(h))
+            let ny: f32 = wrap_y(y + s * sinf(h))
+            if passable(terrain, cell_index(nx, ny), open) {
+                px[i] = nx
+                py[i] = ny
+                cost = cost + MOVE_COST * z * s * s
+            } else {
+                h = h + 3.14159265 * (0.5 + rng_unit(&st))
+            }
+        }
+        hd[i] = h
+
+        let row: i32 = (py[i] as i32) & (WORLD_H - 1)
+        let dt: f32 = temp_row[row] - topt[i]
+        cost = cost + thermal_cost * z * dt * dt
+
+        en[i] = en[i] - cost
+        age[i] = age[i] + 1
+        if cd[i] > 0 {
+            cd[i] = cd[i] - 1
+        }
+    }
+}
+
+# Agents eat from the cell they stand in, oldest first.
+export function feed(w: ptr<World>) -> void {
+    let food: ptr<f32> = w.food
+    let en: ptr<f32> = w.en
+    let size: ptr<f32> = w.size
+    let start: ptr<i32> = w.cell_start
+    let order: ptr<i32> = w.order
+    parallel for y in 0 to WORLD_H {
+        let row: i32 = y * WORLD_W
+        for x in 0 to WORLD_W {
+            let c: i32 = row + x
+            let s: i32 = start[c]
+            let e: i32 = start[c + 1]
+            if e > s {
+                let mut f: f32 = food[c]
+                for k in s to e {
+                    let i: i32 = order[k]
+                    if en[i] > 0.0 {
+                        let z: f32 = size[i]
+                        let mut take: f32 = BITE * z
+                        let room: f32 = ENERGY_CAP * z - en[i]
+                        if take > room { take = room }
+                        if take > f { take = f }
+                        if take > 0.0 {
+                            en[i] = en[i] + take
+                            f = f - take
+                        }
+                    }
+                }
+                food[c] = f
+            }
+        }
+    }
+}

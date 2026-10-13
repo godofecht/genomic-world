@@ -1,0 +1,84 @@
+# The whole simulation state in one record.
+#
+# Agents are stored as structure of arrays: one array per field, indexed by
+# slot. Slots 0 to n-1 are alive and packed; compaction keeps them in birth
+# order, which is also the order agents eat in within a cell.
+
+import .config
+import .climate
+
+# The agent columns, as a unit. World holds the live set inline and a second
+# set in `back`; compaction scatters survivors into back, then swaps.
+struct Agents {
+    px: ptr<f32>,
+    py: ptr<f32>,
+    hd: ptr<f32>,
+    en: ptr<f32>,
+    age: ptr<i32>,
+    cd: ptr<i32>,
+    seed_of: ptr<u32>,
+    topt: ptr<f32>,
+    spd: ptr<f32>,
+    size: ptr<f32>,
+    thr: ptr<f32>,
+    sense: ptr<i32>,
+    load: ptr<i32>,
+    col: ptr<u32>,
+    genome: ptr<u32>
+}
+
+struct World {
+    tick: u32,
+    seed: u32,
+    n: i32,
+    climate: Climate,
+    passes_open: bool,
+    warming_dir: i32,
+
+    # genetics
+    mu: f32,
+    xover: f32,
+    lambda: f32,
+    p0: f32,
+    thermal_cost: f32,
+
+    # field, WORLD_CELLS each
+    food: ptr<f32>,
+    fert: ptr<f32>,
+    terrain: ptr<u8>,
+    zone: ptr<u8>,
+    temp_row: ptr<f32>,
+
+    # agents, N_MAX each
+    px: ptr<f32>,
+    py: ptr<f32>,
+    hd: ptr<f32>,
+    en: ptr<f32>,
+    age: ptr<i32>,
+    cd: ptr<i32>,
+    seed_of: ptr<u32>,
+    topt: ptr<f32>,
+    spd: ptr<f32>,
+    size: ptr<f32>,
+    thr: ptr<f32>,
+    sense: ptr<i32>,
+    load: ptr<i32>,
+    col: ptr<u32>,
+    genome: ptr<u32>,
+    back: Agents,
+    slot_dst: ptr<i32>,
+
+    # spatial index, rebuilt every tick
+    cell_of: ptr<i32>,
+    cell_start: ptr<i32>,
+    cell_fill: ptr<i32>,
+    order: ptr<i32>,
+
+    # per tick counters
+    births: i32,
+    stillborn: i32,
+    starved: i32,
+    old_age: i32,
+    pending: i32,
+    next_seed: u32
+}

@@ -1,0 +1,48 @@
+# Counter-based random numbers.
+#
+# Every draw starts from a hash of (agent seed, tick, purpose). No generator
+# state is shared between agents, so a parallel loop produces the same numbers
+# as a serial one, and a run replays exactly from its seed on any thread count.
+
+export function rng_hash(x: u32) -> u32 {
+    let mut h: u32 = x
+    h = h ^ (h >> 16)
+    h = h * (0x7feb352d as u32)
+    h = h ^ (h >> 15)
+    h = h * (0x846ca68b as u32)
+    h = h ^ (h >> 16)
+    return h
+}
+
+# A nonzero xorshift state derived from three counters.
+export function rng_stream(seed: u32, tick: u32, salt: u32) -> u32 {
+    let a: u32 = rng_hash(tick * (0x9e3779b9 as u32) + salt)
+    let s: u32 = rng_hash(seed ^ a)
+    return s | 1
+}
+
+export function rng_next(st: ptr<u32>) -> u32 {
+    let mut x: u32 = st[0]
+    x = x ^ (x << 13)
+    x = x ^ (x >> 17)
+    x = x ^ (x << 5)
+    st[0] = x
+    return x
+}
+
+# Uniform in [0, 1) with 24 bits.
+export function rng_unit(st: ptr<u32>) -> f32 {
+    let bits: u32 = rng_next(st) >> 8
+    return (bits as f32) * (1.0 / 16777216.0)
+}
+
+# Uniform integer in [0, n).
+export function rng_below(st: ptr<u32>, n: i32) -> i32 {
+    let bits: u32 = rng_next(st) >> 4
+    return (bits % (n as u32)) as i32
+}
+
+# Uniform 32-bit word.
+export function rng_word(st: ptr<u32>) -> u32 {
+    return rng_next(st)
+}

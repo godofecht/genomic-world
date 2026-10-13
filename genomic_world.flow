@@ -1,0 +1,105 @@
+# GENOMIC WORLD: diploid organisms evolving on a 2D torus.
+#
+# 256 x 256 cells, tens of thousands of agents. Every agent carries a
+# bit-packed diploid genome of four chromosomes and 128 loci. Additive loci
+# build five traits (thermal optimum, speed, sensing range, body size,
+# breeding threshold); sixteen housekeeping loci carry recessive deleterious
+# alleles; thirty neutral marker loci give each lineage its colour.
+#
+# Organisms forage, pay for their traits in energy, find mates nearby, and
+# pass on recombined, mutated gametes. Temperature varies with latitude, so
+# thermal optimum is under divergent selection and a cline forms. Two
+# mountain ridges with passes divide the world into an inner and an outer
+# region; closing the passes stops gene flow and F_ST climbs.
+#
+# Run: ./run.sh            live window
+#      ./run.sh record 400  headless GIF to out/world.gif
+
+import "stdlib/gfx.flow"
+import "stdlib/keys.flow"
+import gsim.config
+import gsim.state
+import gsim.step
+import gsim.stats
+import gsim.world
+import gsim.canvas
+import gsim.render
+
+const STATS_EVERY: i32 = 4
+const HIST_EVERY: i32 = 16
+
+# Key edge detection: true on the frame a key goes down.
+struct Keys {
+    held: array<bool, 16>
+}
+
+function pressed(g: Gfx, k: ptr<Keys>, slot: i32, code: i32) -> bool {
+    let down: bool = gfx_key_down(g, code)
+    let was: bool = k.held[slot]
+    k.held[slot] = down
+    return down and !was
+}
+
+function mu_for(level: i32) -> f32 {
+    if level == 0 { return 0.0001 }
+    if level == 2 { return 0.0025 }
+    return DEFAULT_MU
+}
+
+function main() -> i32 {
+    let mut w: World = sim_init(20261013 as u32)
+    let mut s: Stats = stats_alloc()
+    let cv: Canvas = canvas_new(WIN_W, WIN_H)
+    let mut ui: Ui = Ui { view: VIEW_ANCESTRY, steps: 2, paused: false, mu_level: 1 }
+    let mut keys: Keys = Keys { held: [false, false, false, false, false, false, false, false,
+                                       false, false, false, false, false, false, false, false] }
+    let mut world_seed: u32 = 20261013 as u32
+    stats_compute(&s, &w)
+
+    let g: Gfx = gfx_open(WIN_W, WIN_H, "Genomic World - Flow")
+    let mut frame: i32 = 0
+    while gfx_frame_pump(g) {
+        if pressed(g, &keys, 0, KEY_1) { ui.view = VIEW_ANCESTRY }
+        if pressed(g, &keys, 1, KEY_2) { ui.view = VIEW_CLIMATE }
+        if pressed(g, &keys, 2, KEY_3) { ui.view = VIEW_FOOD }
+        if pressed(g, &keys, 3, KEY_4) { ui.view = VIEW_LOAD }
+        if pressed(g, &keys, 4, KEY_P) { ui.paused = !ui.paused }
+        if pressed(g, &keys, 5, KEY_B) { w.passes_open = !w.passes_open }
+        if pressed(g, &keys, 6, KEY_W) {
+            if w.climate.target < 0.15 { w.warming_dir = 1 } else { w.warming_dir = -1 }
+        }
+        if pressed(g, &keys, 7, KEY_M) {
+            ui.mu_level = (ui.mu_level + 1) % 3
+            world_set_mu(&w, mu_for(ui.mu_level))
+        }
+        if pressed(g, &keys, 8, KEY_X) { sim_bottleneck(&w, 0.1) }
+        if pressed(g, &keys, 9, KEY_R) {
+            world_seed = world_seed * (1664525 as u32) + (1013904223 as u32)
+            sim_reseed(&w, world_seed)
+            stats_reset_history(&s)
+        }
+        if pressed(g, &keys, 10, KEY_RBRACKET) and ui.steps < 16 { ui.steps = ui.steps * 2 }
+        if pressed(g, &keys, 11, KEY_LBRACKET) and ui.steps > 1 { ui.steps = ui.steps / 2 }
+
+        if !ui.paused and w.n > 0 {
+            for k in 0 to ui.steps {
+                sim_step(&w)
+                if (w.tick % (HIST_EVERY as u32)) == (0 as u32) {
+                    stats_compute(&s, &w)
+                    stats_record(&s, &w)
+                }
+            }
+        }
+        if frame % STATS_EVERY == 0 {
+            stats_compute(&s, &w)
+        }
+
+        render_frame(cv, &w, &s, ui)
+        gfx_blit_rgb(g, 0, 0, WIN_W, WIN_H, cv.px)
+        gfx_present(g)
+        gfx_wait_frame(g, 60)
+        frame = frame + 1
+    }
+    gfx_close(g)
+    return 0
+}

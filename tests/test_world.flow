@@ -1,0 +1,148 @@
+# World invariants: the spatial index, the food field, terrain, compaction,
+# the climate model's events, and the barrier.
+
+import gsim.config
+import gsim.state
+import gsim.rng
+import gsim.world
+import gsim.population
+import gsim.step
+import "stdlib/memory.flow"
+
+function check_index(w: ptr<World>) -> bool {
+    let seen: ptr<i32> = alloc_i32(N_MAX as i64)
+    for i in 0 to w.n {
+        seen[i] = 0
+    }
+    for c in 0 to WORLD_CELLS {
+        for k in w.cell_start[c] to w.cell_start[c + 1] {
+            let i: i32 = w.order[k]
+            if cell_index(w.px[i], w.py[i]) != c {
+                return false
+            }
+            seen[i] = seen[i] + 1
+        }
+    }
+    for i in 0 to w.n {
+        if seen[i] != 1 {
+            return false
+        }
+    }
+    return w.cell_start[WORLD_CELLS] == w.n
+}
+
+function main() -> i32 {
+    let mut w: World = sim_init(424242 as u32)
+
+    # 1. Every agent sits in exactly one bucket, the right one.
+    pop_index(&w)
+    if !check_index(&w) {
+        printf("FAIL 1 spatial index\n")
+        return 1
+    }
+
+    # 2-4, 6. Run, checking field and agent invariants each tick.
+    for t in 0 to 300 {
+        sim_step(&w)
+        if w.n <= 0 or w.n > N_MAX {
+            printf("FAIL 4 population %d\n", w.n)
+            return 4
+        }
+        for c in 0 to WORLD_CELLS {
+            if w.food[c] < 0.0 or w.food[c] > w.fert[c] * FOOD_MAX + 0.00001 {
+                printf("FAIL 2 food %f at %d\n", w.food[c] as f64, c)
+                return 2
+            }
+        }
+        for i in 0 to w.n {
+            if !passable(w.terrain, cell_index(w.px[i], w.py[i]), w.passes_open) {
+                printf("FAIL 3 agent %d on impassable terrain\n", i)
+                return 3
+            }
+            if w.en[i] > ENERGY_CAP * w.size[i] + 0.0001 {
+                printf("FAIL 6 energy over cap\n")
+                return 6
+            }
+        }
+    }
+    pop_index(&w)
+    if !check_index(&w) {
+        printf("FAIL 1 spatial index after 300 ticks\n")
+        return 1
+    }
+
+    # 5. Compaction keeps survivors in order with their genomes intact.
+    let n0: i32 = w.n
+    let keep_seed: ptr<u32> = alloc_zeroed((n0 as i64) * 4) as ptr<u32>
+    let keep_word: ptr<u32> = alloc_zeroed((n0 as i64) * 4) as ptr<u32>
+    let mut kept: i32 = 0
+    for i in 0 to n0 {
+        if i % 3 == 0 {
+            w.en[i] = 0.0
+        } else {
+            keep_seed[kept] = w.seed_of[i]
+            keep_word[kept] = w.genome[i * GENOME_WORDS + 5]
+            kept = kept + 1
+        }
+    }
+    pop_compact(&w, n0)
+    if w.n != kept {
+        printf("FAIL 5 compaction count %d vs %d\n", w.n, kept)
+        return 5
+    }
+    for i in 0 to kept {
+        if w.seed_of[i] != keep_seed[i] or w.genome[i * GENOME_WORDS + 5] != keep_word[i] {
+            printf("FAIL 5 compaction order or genome at %d\n", i)
+            return 5
+        }
+    }
+
+    # 7. Warming approaches its target. 8. Cooling returns it to zero.
+    w.warming_dir = 1
+    for t in 0 to 3000 {
+        world_climate_step(&w)
+    }
+    let hot: f64 = w.climate.warming
+    w.warming_dir = -1
+    for t in 0 to 3000 {
+        world_climate_step(&w)
+    }
+    let cool: f64 = w.climate.warming
+    printf("  warmed to %.4f, cooled to %.4f\n", hot, cool)
+    if hot < 0.29 or hot > 0.3 {
+        printf("FAIL 7 warming %f\n", hot)
+        return 7
+    }
+    if cool < 0.0 or cool > 0.01 {
+        printf("FAIL 8 cooling floor %f\n", cool)
+        return 8
+    }
+
+    # 9. With the passes closed, no agent changes region in a move.
+    w.passes_open = false
+    let before: ptr<i32> = alloc_i32(N_MAX as i64)
+    for t in 0 to 200 {
+        sim_phase(&w, 0)
+        sim_phase(&w, 1)
+        for i in 0 to w.n {
+            before[i] = region_at(&w, w.px[i], w.py[i])
+            # An agent caught on a pass as it closed may step off either side.
+            if w.terrain[cell_index(w.px[i], w.py[i])] == TERRAIN_PASS {
+                before[i] = -1
+            }
+        }
+        sim_phase(&w, 2)
+        for i in 0 to w.n {
+            if before[i] >= 0 and region_at(&w, w.px[i], w.py[i]) != before[i] {
+                printf("FAIL 9 agent %d crossed a closed ridge\n", i)
+                return 9
+            }
+        }
+        for k in 3 to PHASES {
+            sim_phase(&w, k)
+        }
+    }
+
+    printf("OK world\n")
+    return 0
+}

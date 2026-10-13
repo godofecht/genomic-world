@@ -1,0 +1,213 @@
+# Agent storage: founding, expression, the spatial index and compaction.
+
+import .config
+import .state
+import .rng
+import .bits
+import .genome
+import .world
+
+# Cache the phenotype of slot i from its genome.
+export function pop_express(w: ptr<World>, i: i32) -> void {
+    let g: ptr<u32> = w.genome
+    let b: i32 = i * GENOME_WORDS
+    w.topt[i] = gen_thermal(g, b)
+    w.spd[i] = gen_speed(g, b)
+    w.sense[i] = gen_sense(g, b)
+    w.size[i] = gen_size(g, b)
+    w.thr[i] = gen_repro(g, b) * w.size[i]
+    w.load[i] = gen_load(g, b)
+    w.col[i] = gen_color(g, b)
+}
+
+export function pop_fresh_seed(w: ptr<World>) -> u32 {
+    w.next_seed = rng_hash(w.next_seed + (0x6a09e667 as u32))
+    return w.next_seed
+}
+
+# Set the first `level` bits of a ten-locus marker block.
+function marker_block(level: i32, shift: i32) -> u32 {
+    return low_mask(level) << (shift as u32)
+}
+
+# Founders: FOUNDER_GROUPS clusters, each homozygous for its own marker
+# haplotype. Trait loci are drawn at frequency one half, housekeeping loci
+# start clean.
+export function pop_found(w: ptr<World>) -> void {
+    let mut st: u32 = rng_stream(w.seed, 0 as u32, 99 as u32)
+    w.n = 0
+    for grp in 0 to FOUNDER_GROUPS {
+        let mut cx: f32 = 0.0
+        let mut cy: f32 = 0.0
+        let mut tries: i32 = 0
+        let mut ok: bool = false
+        while !ok and tries < 1000 {
+            cx = rng_unit(&st) * (WORLD_W as f32)
+            cy = rng_unit(&st) * (WORLD_H as f32)
+            ok = w.terrain[cell_index(cx, cy)] == TERRAIN_LAND
+            tries = tries + 1
+        }
+        let mark: u32 = marker_block(rng_below(&st, 11), 0)
+                      | marker_block(rng_below(&st, 11), 10)
+                      | marker_block(rng_below(&st, 11), 20)
+        let mut placed: i32 = 0
+        while placed < FOUNDERS_PER_GROUP and w.n < N_MAX {
+            let ang: f32 = rng_unit(&st) * 6.2831853
+            let rad: f32 = rng_unit(&st) * 8.0
+            let x: f32 = wrap_x(cx + rad * cosf(ang))
+            let y: f32 = wrap_y(cy + rad * sinf(ang))
+            if w.terrain[cell_index(x, y)] == TERRAIN_LAND {
+                let i: i32 = w.n
+                let b: i32 = i * GENOME_WORDS
+                for c in 0 to 3 {
+                    w.genome[b + c] = rng_word(&st)
+                    w.genome[b + c + CHROMS] = rng_word(&st)
+                }
+                # Housekeeping half of chromosome 2 starts free of load.
+                w.genome[b + 2] = w.genome[b + 2] & MASK_LO16
+                w.genome[b + 6] = w.genome[b + 6] & MASK_LO16
+                w.genome[b + 3] = mark
+                w.genome[b + 7] = mark
+                w.px[i] = x
+                w.py[i] = y
+                w.hd[i] = rng_unit(&st) * 6.2831853
+                w.age[i] = rng_below(&st, MATURE_AGE * 3)
+                w.cd[i] = 0
+                w.seed_of[i] = pop_fresh_seed(w)
+                pop_express(w, i)
+                w.en[i] = 0.6 * w.thr[i]
+                w.n = w.n + 1
+            }
+            placed = placed + 1
+        }
+    }
+}
+
+# Counting sort of agents by cell. After this, the agents in cell c are
+# order[cell_start[c] .. cell_start[c + 1]], in slot order.
+export function pop_index(w: ptr<World>) -> void {
+    let n: i32 = w.n
+    let px: ptr<f32> = w.px
+    let py: ptr<f32> = w.py
+    let cell_of: ptr<i32> = w.cell_of
+    let start: ptr<i32> = w.cell_start
+    let fill: ptr<i32> = w.cell_fill
+    let order: ptr<i32> = w.order
+    for i in 0 to n {
+        cell_of[i] = cell_index(px[i], py[i])
+    }
+    for c in 0 to WORLD_CELLS {
+        fill[c] = 0
+    }
+    for i in 0 to n {
+        let c: i32 = cell_of[i]
+        fill[c] = fill[c] + 1
+    }
+    let mut acc: i32 = 0
+    for c in 0 to WORLD_CELLS {
+        start[c] = acc
+        acc = acc + fill[c]
+        fill[c] = start[c]
+    }
+    start[WORLD_CELLS] = acc
+    for i in 0 to n {
+        let c: i32 = cell_of[i]
+        order[fill[c]] = i
+        fill[c] = fill[c] + 1
+    }
+}
+
+# Remove the dead and pack survivors to the front, keeping their order.
+#
+# A serial pass assigns each survivor its destination slot. A parallel pass
+# then scatters every column into the back buffer, which cannot overlap the
+# source, and the two buffers swap.
+export function pop_compact(w: ptr<World>, total: i32) -> void {
+    let en: ptr<f32> = w.en
+    let age: ptr<i32> = w.age
+    let dst: ptr<i32> = w.slot_dst
+    let mut out: i32 = 0
+    let mut starved: i32 = 0
+    let mut old: i32 = 0
+    for i in 0 to total {
+        if en[i] <= 0.0 {
+            dst[i] = -1
+            starved = starved + 1
+        } elif age[i] >= MAX_AGE {
+            dst[i] = -1
+            old = old + 1
+        } else {
+            dst[i] = out
+            out = out + 1
+        }
+    }
+    w.starved = w.starved + starved
+    w.old_age = w.old_age + old
+    w.n = out
+    if out == total { return }
+
+    let b: Agents = w.back
+    let px: ptr<f32> = w.px
+    let py: ptr<f32> = w.py
+    let hd: ptr<f32> = w.hd
+    let cd: ptr<i32> = w.cd
+    let seed_of: ptr<u32> = w.seed_of
+    let topt: ptr<f32> = w.topt
+    let spd: ptr<f32> = w.spd
+    let size: ptr<f32> = w.size
+    let thr: ptr<f32> = w.thr
+    let sense: ptr<i32> = w.sense
+    let load: ptr<i32> = w.load
+    let col: ptr<u32> = w.col
+    let g: ptr<u32> = w.genome
+    let bg: ptr<u32> = b.genome
+    parallel for i in 0 to total {
+        let d: i32 = dst[i]
+        if d >= 0 {
+            b.px[d] = px[i]
+            b.py[d] = py[i]
+            b.hd[d] = hd[i]
+            b.en[d] = en[i]
+            b.age[d] = age[i]
+            b.cd[d] = cd[i]
+            b.seed_of[d] = seed_of[i]
+            b.topt[d] = topt[i]
+            b.spd[d] = spd[i]
+            b.size[d] = size[i]
+            b.thr[d] = thr[i]
+            b.sense[d] = sense[i]
+            b.load[d] = load[i]
+            b.col[d] = col[i]
+            let sb: i32 = i * GENOME_WORDS
+            let db: i32 = d * GENOME_WORDS
+            for k in 0 to GENOME_WORDS {
+                bg[db + k] = g[sb + k]
+            }
+        }
+    }
+    swap_buffers(w)
+}
+
+function swap_buffers(w: ptr<World>) -> void {
+    let b: Agents = w.back
+    w.back = Agents {
+        px: w.px, py: w.py, hd: w.hd, en: w.en, age: w.age, cd: w.cd,
+        seed_of: w.seed_of, topt: w.topt, spd: w.spd, size: w.size,
+        thr: w.thr, sense: w.sense, load: w.load, col: w.col, genome: w.genome
+    }
+    w.px = b.px
+    w.py = b.py
+    w.hd = b.hd
+    w.en = b.en
+    w.age = b.age
+    w.cd = b.cd
+    w.seed_of = b.seed_of
+    w.topt = b.topt
+    w.spd = b.spd
+    w.size = b.size
+    w.thr = b.thr
+    w.sense = b.sense
+    w.load = b.load
+    w.col = b.col
+    w.genome = b.genome
+}

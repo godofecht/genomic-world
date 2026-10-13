@@ -1,0 +1,93 @@
+# Sexual reproduction.
+#
+# An agent breeds when it is mature, off cooldown, and holds at least its
+# genetic threshold of energy. It needs a mate in its own cell or one of the
+# eight around it. The child gets one recombined, mutated gamete from each
+# parent. A child homozygous at LETHAL_LOAD or more housekeeping loci is not
+# viable; the parents still pay.
+#
+# This pass is serial so that two agents never claim the same mate in one
+# tick. Children are appended after slot n and join the population at the
+# next compaction.
+
+import .config
+import .state
+import .rng
+import .genome
+import .world
+import .population
+
+# A mate is mature, off cooldown and fed above half its own threshold.
+function can_mate(w: ptr<World>, j: i32) -> bool {
+    return w.age[j] >= MATURE_AGE and w.cd[j] == 0 and w.en[j] > 0.5 * w.thr[j]
+}
+
+function find_mate(w: ptr<World>, i: i32, st: ptr<u32>) -> i32 {
+    let cx: i32 = w.px[i] as i32
+    let cy: i32 = w.py[i] as i32
+    let off: i32 = rng_below(st, 9)
+    let mut k: i32 = 0
+    while k < 9 {
+        let kk: i32 = (k + off) % 9
+        let nx: i32 = (cx + (kk % 3) - 1) & (WORLD_W - 1)
+        let ny: i32 = (cy + (kk / 3) - 1) & (WORLD_H - 1)
+        let c: i32 = ny * WORLD_W + nx
+        let e: i32 = w.cell_start[c + 1]
+        let mut s: i32 = w.cell_start[c]
+        while s < e {
+            let j: i32 = w.order[s]
+            if j != i and can_mate(w, j) {
+                return j
+            }
+            s = s + 1
+        }
+        k = k + 1
+    }
+    return -1
+}
+
+# Returns the slot count including newborns.
+export function reproduce(w: ptr<World>) -> i32 {
+    let n: i32 = w.n
+    let mut total: i32 = n
+    let tick: u32 = w.tick
+    let g: ptr<u32> = w.genome
+    let mut i: i32 = 0
+    while i < n and total < N_MAX {
+        if w.age[i] >= MATURE_AGE and w.cd[i] == 0 and w.en[i] >= w.thr[i] {
+            let mut st: u32 = rng_stream(w.seed_of[i], tick, 2 as u32)
+            let j: i32 = find_mate(w, i, &st)
+            if j >= 0 {
+                let c: i32 = total
+                gen_cross(g, i * GENOME_WORDS, g, j * GENOME_WORDS,
+                          g, c * GENOME_WORDS, &st, w.xover, w.lambda, w.p0)
+                let pay_i: f32 = 0.55 * w.thr[i]
+                let pay_j: f32 = 0.15 * w.thr[j]
+                w.en[i] = w.en[i] - pay_i
+                w.en[j] = w.en[j] - pay_j
+                w.cd[i] = COOLDOWN
+                w.cd[j] = COOLDOWN
+                if gen_load(g, c * GENOME_WORDS) >= LETHAL_LOAD {
+                    w.stillborn = w.stillborn + 1
+                } else {
+                    w.px[c] = wrap_x(w.px[i] + rng_unit(&st) - 0.5)
+                    w.py[c] = wrap_y(w.py[i] + rng_unit(&st) - 0.5)
+                    if !passable(w.terrain, cell_index(w.px[c], w.py[c]), w.passes_open) {
+                        w.px[c] = w.px[i]
+                        w.py[c] = w.py[i]
+                    }
+                    w.hd[c] = rng_unit(&st) * 6.2831853
+                    w.age[c] = 0
+                    w.cd[c] = 0
+                    w.seed_of[c] = pop_fresh_seed(w)
+                    pop_express(w, c)
+                    w.en[c] = 0.85 * (pay_i + pay_j)
+                    total = total + 1
+                    w.births = w.births + 1
+                }
+            }
+        }
+        i = i + 1
+    }
+    return total
+}

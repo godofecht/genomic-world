@@ -1,0 +1,68 @@
+# Evolution at the population level, each claim against a control run that
+# differs in one parameter from the same seed.
+#
+#   1  thermal selection builds a cline: corr(T_opt, local T) > 0.6
+#   2  control without thermal selection: the correlation stays below 0.3
+#   3  closed passes keep the regions apart: F_ST higher than with passes open
+#   4  a higher mutation rate raises the deleterious burden
+
+import gsim.config
+import gsim.state
+import gsim.world
+import gsim.step
+import gsim.stats
+
+const TICKS: i32 = 1500
+const SEED: u32 = 777001
+
+struct Outcome {
+    adapt_r: f32,
+    fst: f32,
+    burden: f32,
+    n: i32
+}
+
+function run(thermal: f32, open: bool, mu: f32) -> Outcome {
+    let mut w: World = sim_init(SEED)
+    let mut s: Stats = stats_alloc()
+    w.thermal_cost = thermal
+    w.passes_open = open
+    world_set_mu(&w, mu)
+    for t in 0 to TICKS {
+        sim_step(&w)
+    }
+    stats_compute(&s, &w)
+    printf("  thermal %.3f  passes %d  mu %.5f  ->  n %d  adapt_r %.3f  F_ST %.4f  burden %.3f\n",
+           thermal as f64, open as i32, mu as f64, w.n, s.adapt_r as f64,
+           s.fst as f64, s.mean_burden as f64)
+    return Outcome { adapt_r: s.adapt_r, fst: s.fst, burden: s.mean_burden, n: w.n }
+}
+
+function main() -> i32 {
+    let base: Outcome = run(THERMAL_COST, true, DEFAULT_MU)
+    if base.n == 0 {
+        printf("FAIL 0 extinct\n")
+        return 10
+    }
+    if base.adapt_r < 0.6 {
+        printf("FAIL 1 no thermal cline\n")
+        return 1
+    }
+    let neutral: Outcome = run(0.0, true, DEFAULT_MU)
+    if neutral.adapt_r > 0.3 {
+        printf("FAIL 2 cline without selection\n")
+        return 2
+    }
+    let closed: Outcome = run(THERMAL_COST, false, DEFAULT_MU)
+    if closed.fst <= base.fst {
+        printf("FAIL 3 closing the passes did not raise F_ST\n")
+        return 3
+    }
+    let hot: Outcome = run(THERMAL_COST, true, DEFAULT_MU * 5.0)
+    if hot.burden <= base.burden {
+        printf("FAIL 4 higher mutation rate did not raise burden\n")
+        return 4
+    }
+    printf("OK evolution\n")
+    return 0
+}

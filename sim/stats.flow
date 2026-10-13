@@ -1,0 +1,233 @@
+# Population-genetic summaries.
+#
+#   freq[l]      allele 1 frequency at locus l, all agents
+#   F_ST         Hudson-style fixation index between the inner and outer
+#                regions over the 30 marker loci: (H_T - H_S) / H_T, ratio
+#                of sums across loci
+#   het          mean expected heterozygosity 2p(1 - p) at marker loci
+#   adapt_r      Pearson correlation between an agent's thermal optimum and
+#                the temperature of the row it stands in
+#   burden       mean count of deleterious alleles per genome
+#
+# Allele counting runs in parallel over loci, so each thread owns its
+# counters and no reduction is needed.
+
+import "stdlib/memory.flow"
+import .config
+import .state
+import .bits
+import .genome
+import .world
+
+extern {
+    function sqrtf(x: f32) -> f32
+}
+
+struct Stats {
+    freq: ptr<f32>,
+    freq0: ptr<f32>,
+    freq1: ptr<f32>,
+    n0: i32,
+    n1: i32,
+    fst: f32,
+    het: f32,
+    adapt_r: f32,
+    mismatch: f32,
+    mean_topt: f32,
+    mean_spd: f32,
+    mean_sense: f32,
+    mean_size: f32,
+    mean_repro: f32,
+    mean_load: f32,
+    mean_burden: f32,
+    band_topt: ptr<f32>,
+    band_temp: ptr<f32>,
+    band_n: ptr<i32>,
+    hist_pop: ptr<f32>,
+    hist_fst: ptr<f32>,
+    hist_het: ptr<f32>,
+    hist_r: ptr<f32>,
+    hist_burden: ptr<f32>,
+    hist_head: i32,
+    hist_count: i32
+}
+
+export function stats_alloc() -> Stats {
+    let h: i64 = HIST_LEN as i64
+    return Stats {
+        freq: alloc_f32(LOCI as i64),
+        freq0: alloc_f32(LOCI as i64),
+        freq1: alloc_f32(LOCI as i64),
+        n0: 0, n1: 0,
+        fst: 0.0, het: 0.0, adapt_r: 0.0, mismatch: 0.0,
+        mean_topt: 0.0, mean_spd: 0.0, mean_sense: 0.0, mean_size: 0.0,
+        mean_repro: 0.0, mean_load: 0.0, mean_burden: 0.0,
+        band_topt: alloc_f32(LAT_BANDS as i64),
+        band_temp: alloc_f32(LAT_BANDS as i64),
+        band_n: alloc_i32(LAT_BANDS as i64),
+        hist_pop: alloc_f32(h),
+        hist_fst: alloc_f32(h),
+        hist_het: alloc_f32(h),
+        hist_r: alloc_f32(h),
+        hist_burden: alloc_f32(h),
+        hist_head: 0,
+        hist_count: 0
+    }
+}
+
+export function stats_reset_history(s: ptr<Stats>) -> void {
+    s.hist_head = 0
+    s.hist_count = 0
+}
+
+function allele_counts(s: ptr<Stats>, w: ptr<World>) -> void {
+    let n: i32 = w.n
+    let g: ptr<u32> = w.genome
+    let px: ptr<f32> = w.px
+    let py: ptr<f32> = w.py
+    let zone: ptr<u8> = w.zone
+    let freq: ptr<f32> = s.freq
+    let freq0: ptr<f32> = s.freq0
+    let freq1: ptr<f32> = s.freq1
+    let mut n1: i32 = 0
+    for i in 0 to n {
+        n1 = n1 + (zone[cell_index(px[i], py[i])] as i32)
+    }
+    let n0: i32 = n - n1
+    s.n0 = n0
+    s.n1 = n1
+    parallel for l in 0 to LOCI {
+        let word: i32 = l >> 5
+        let bit: u32 = (l & 31) as u32
+        let mut c0: i32 = 0
+        let mut c1: i32 = 0
+        for i in 0 to n {
+            let b: i32 = i * GENOME_WORDS + word
+            let d: i32 = (((g[b] >> bit) & (1 as u32)) + ((g[b + CHROMS] >> bit) & (1 as u32))) as i32
+            if zone[cell_index(px[i], py[i])] == (1 as u8) {
+                c1 = c1 + d
+            } else {
+                c0 = c0 + d
+            }
+        }
+        let mut f: f32 = 0.0
+        if n > 0 { f = ((c0 + c1) as f32) / (2.0 * (n as f32)) }
+        let mut f0: f32 = 0.0
+        if n0 > 0 { f0 = (c0 as f32) / (2.0 * (n0 as f32)) }
+        let mut f1: f32 = 0.0
+        if n1 > 0 { f1 = (c1 as f32) / (2.0 * (n1 as f32)) }
+        freq[l] = f
+        freq0[l] = f0
+        freq1[l] = f1
+    }
+}
+
+# Marker loci are chromosome 3, bits 0-29.
+function marker_stats(s: ptr<Stats>) -> void {
+    let mut ht_sum: f32 = 0.0
+    let mut hs_sum: f32 = 0.0
+    let mut het_sum: f32 = 0.0
+    let tot: f32 = (s.n0 + s.n1) as f32
+    let w0: f32 = (s.n0 as f32) / tot
+    let w1: f32 = (s.n1 as f32) / tot
+    for k in 0 to MARKER_LOCI {
+        let l: i32 = 96 + k
+        let p: f32 = s.freq[l]
+        let p0: f32 = s.freq0[l]
+        let p1: f32 = s.freq1[l]
+        let ht: f32 = 2.0 * p * (1.0 - p)
+        let hs: f32 = w0 * 2.0 * p0 * (1.0 - p0) + w1 * 2.0 * p1 * (1.0 - p1)
+        ht_sum = ht_sum + ht
+        hs_sum = hs_sum + hs
+        het_sum = het_sum + ht
+    }
+    s.het = het_sum / (MARKER_LOCI as f32)
+    s.fst = 0.0
+    if ht_sum > 0.000001 and s.n0 > 0 and s.n1 > 0 {
+        s.fst = (ht_sum - hs_sum) / ht_sum
+    }
+}
+
+function trait_stats(s: ptr<Stats>, w: ptr<World>) -> void {
+    let n: i32 = w.n
+    for b in 0 to LAT_BANDS {
+        s.band_topt[b] = 0.0
+        s.band_n[b] = 0
+        let row: i32 = b * (WORLD_H / LAT_BANDS) + WORLD_H / (2 * LAT_BANDS)
+        s.band_temp[b] = w.temp_row[row]
+    }
+    let mut st: f64 = 0.0
+    let mut stt: f64 = 0.0
+    let mut so: f64 = 0.0
+    let mut soo: f64 = 0.0
+    let mut sto: f64 = 0.0
+    let mut mis: f64 = 0.0
+    let mut spd: f64 = 0.0
+    let mut sen: f64 = 0.0
+    let mut siz: f64 = 0.0
+    let mut rep: f64 = 0.0
+    let mut lod: f64 = 0.0
+    let mut bur: f64 = 0.0
+    for i in 0 to n {
+        let row: i32 = (w.py[i] as i32) & (WORLD_H - 1)
+        let t: f64 = w.temp_row[row] as f64
+        let o: f64 = w.topt[i] as f64
+        st = st + t
+        stt = stt + t * t
+        so = so + o
+        soo = soo + o * o
+        sto = sto + t * o
+        mis = mis + (t - o) * (t - o)
+        spd = spd + (w.spd[i] as f64)
+        sen = sen + (w.sense[i] as f64)
+        siz = siz + (w.size[i] as f64)
+        rep = rep + ((w.thr[i] / w.size[i]) as f64)
+        lod = lod + (w.load[i] as f64)
+        bur = bur + (gen_burden(w.genome, i * GENOME_WORDS) as f64)
+        let band: i32 = row / (WORLD_H / LAT_BANDS)
+        s.band_topt[band] = s.band_topt[band] + w.topt[i]
+        s.band_n[band] = s.band_n[band] + 1
+    }
+    for b in 0 to LAT_BANDS {
+        if s.band_n[b] > 0 {
+            s.band_topt[b] = s.band_topt[b] / (s.band_n[b] as f32)
+        }
+    }
+    if n == 0 { return }
+    let fn: f64 = n as f64
+    s.mean_topt = (so / fn) as f32
+    s.mean_spd = (spd / fn) as f32
+    s.mean_sense = (sen / fn) as f32
+    s.mean_size = (siz / fn) as f32
+    s.mean_repro = (rep / fn) as f32
+    s.mean_load = (lod / fn) as f32
+    s.mean_burden = (bur / fn) as f32
+    s.mismatch = sqrtf((mis / fn) as f32)
+    let cov: f64 = sto / fn - (st / fn) * (so / fn)
+    let vt: f64 = stt / fn - (st / fn) * (st / fn)
+    let vo: f64 = soo / fn - (so / fn) * (so / fn)
+    s.adapt_r = 0.0
+    if vt > 0.0000001 and vo > 0.0000001 {
+        s.adapt_r = (cov as f32) / sqrtf((vt * vo) as f32)
+    }
+}
+
+export function stats_compute(s: ptr<Stats>, w: ptr<World>) -> void {
+    if w.n == 0 { return }
+    allele_counts(s, w)
+    marker_stats(s)
+    trait_stats(s, w)
+}
+
+export function stats_record(s: ptr<Stats>, w: ptr<World>) -> void {
+    let k: i32 = s.hist_head
+    s.hist_pop[k] = w.n as f32
+    s.hist_fst[k] = s.fst
+    s.hist_het[k] = s.het
+    s.hist_r[k] = s.adapt_r
+    s.hist_burden[k] = s.mean_burden
+    s.hist_head = (k + 1) % HIST_LEN
+    if s.hist_count < HIST_LEN {
+        s.hist_count = s.hist_count + 1
+    }
+}

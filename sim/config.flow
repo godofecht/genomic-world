@@ -1,0 +1,62 @@
+# Fixed sizes and model constants.
+#
+# Everything a run can change at runtime lives in the World struct. What is
+# here is compiled in, so loops over it have known bounds.
+
+# World grid. A torus in both directions, one food value per cell.
+const WORLD_W: i32 = 256
+const WORLD_H: i32 = 256
+const WORLD_CELLS: i32 = 65536
+
+# Agent capacity. Births stop when the arrays are full.
+const N_MAX: i32 = 131072
+
+# Genome: four chromosomes, one 32-bit word each, diploid.
+# Words 0-3 are one homolog set, words 4-7 the other.
+const CHROMS: i32 = 4
+const GENOME_WORDS: i32 = 8
+const LOCI: i32 = 128
+
+# Bit masks for the locus blocks within a chromosome word.
+const MASK_LO16: u32 = 0x0000FFFF
+const MASK_HI16: u32 = 0xFFFF0000
+const MASK_MARK_R: u32 = 0x000003FF
+const MASK_MARK_G: u32 = 0x000FFC00
+const MASK_MARK_B: u32 = 0x3FF00000
+const MARKER_LOCI: i32 = 30
+
+# Life history.
+const MATURE_AGE: i32 = 18
+const MAX_AGE: i32 = 700
+const COOLDOWN: i32 = 12
+const LETHAL_LOAD: i32 = 4
+
+# Energy budget, per tick.
+const BASAL_COST: f32 = 0.005
+const MOVE_COST: f32 = 0.0022
+const SENSE_COST: f32 = 0.0005
+const THERMAL_COST: f32 = 0.05
+const LOAD_PENALTY: f32 = 0.3
+const BITE: f32 = 0.09
+const ENERGY_CAP: f32 = 3.0
+
+# Resource field.
+const REGROW: f32 = 0.012
+const FOOD_MAX: f32 = 1.0
+
+# Terrain codes.
+const TERRAIN_LAND: u8 = 0
+const TERRAIN_RIDGE: u8 = 1
+const TERRAIN_PASS: u8 = 2
+
+# Default genetic parameters.
+const DEFAULT_MU: f32 = 0.0005
+const DEFAULT_XOVER: f32 = 0.5
+
+# Founders.
+const FOUNDER_GROUPS: i32 = 8
+const FOUNDERS_PER_GROUP: i32 = 700
+
+# Statistics.
+const LAT_BANDS: i32 = 32
+const HIST_LEN: i32 = 256

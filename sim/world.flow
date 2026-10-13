@@ -1,0 +1,280 @@
+# Terrain, temperature and the food field.
+#
+# Temperature depends on latitude: cold at row 0, hot at row WORLD_H / 2, cold
+# again at the wrap. Two mountain ridges split the torus into an inner and an
+# outer region. Each ridge has two passes at temperate latitudes, which the
+# B key opens and closes.
+
+import "stdlib/memory.flow"
+import .config
+import .state
+import .climate
+import .rng
+
+extern {
+    function cosf(x: f32) -> f32
+    function sinf(x: f32) -> f32
+    function expf(x: f32) -> f32
+}
+
+const TWO_PI_F: f32 = 6.2831853
+
+export function agents_alloc() -> Agents {
+    let nm: i64 = N_MAX as i64
+    return Agents {
+        px: alloc_f32(nm),
+        py: alloc_f32(nm),
+        hd: alloc_f32(nm),
+        en: alloc_f32(nm),
+        age: alloc_i32(nm),
+        cd: alloc_i32(nm),
+        seed_of: alloc_zeroed(nm * 4) as ptr<u32>,
+        topt: alloc_f32(nm),
+        spd: alloc_f32(nm),
+        size: alloc_f32(nm),
+        thr: alloc_f32(nm),
+        sense: alloc_i32(nm),
+        load: alloc_i32(nm),
+        col: alloc_zeroed(nm * 4) as ptr<u32>,
+        genome: alloc_zeroed(nm * 4 * (GENOME_WORDS as i64)) as ptr<u32>
+    }
+}
+
+export function world_alloc(seed: u32) -> World {
+    let nm: i64 = N_MAX as i64
+    let nc: i64 = WORLD_CELLS as i64
+    let a: Agents = agents_alloc()
+    let w: World = World {
+        tick: 0 as u32,
+        seed: seed,
+        n: 0,
+        climate: Climate_new(),
+        passes_open: true,
+        warming_dir: 0,
+        mu: DEFAULT_MU,
+        xover: DEFAULT_XOVER,
+        lambda: 0.0,
+        p0: 1.0,
+        thermal_cost: THERMAL_COST,
+        food: alloc_f32(nc),
+        fert: alloc_f32(nc),
+        terrain: alloc_zeroed(nc) as ptr<u8>,
+        zone: alloc_zeroed(nc) as ptr<u8>,
+        temp_row: alloc_f32(WORLD_H as i64),
+        px: a.px,
+        py: a.py,
+        hd: a.hd,
+        en: a.en,
+        age: a.age,
+        cd: a.cd,
+        seed_of: a.seed_of,
+        topt: a.topt,
+        spd: a.spd,
+        size: a.size,
+        thr: a.thr,
+        sense: a.sense,
+        load: a.load,
+        col: a.col,
+        genome: a.genome,
+        back: agents_alloc(),
+        slot_dst: alloc_i32(nm),
+        cell_of: alloc_i32(nm),
+        cell_start: alloc_i32(nc + 1),
+        cell_fill: alloc_i32(nc),
+        order: alloc_i32(nm),
+        births: 0,
+        stillborn: 0,
+        starved: 0,
+        old_age: 0,
+        pending: 0,
+        next_seed: seed
+    }
+    return w
+}
+
+# Mutation rate per locus per gamete; caches the Poisson parameters.
+export function world_set_mu(w: ptr<World>, mu: f32) -> void {
+    w.mu = mu
+    w.lambda = mu * (LOCI as f32)
+    w.p0 = expf(0.0 - w.lambda)
+}
+
+export function cell_index(x: f32, y: f32) -> i32 {
+    let ix: i32 = (x as i32) & (WORLD_W - 1)
+    let iy: i32 = (y as i32) & (WORLD_H - 1)
+    return iy * WORLD_W + ix
+}
+
+export function wrap_x(x: f32) -> f32 {
+    let fw: f32 = WORLD_W as f32
+    let mut r: f32 = x
+    if r < 0.0 { r = r + fw }
+    if r >= fw { r = r - fw }
+    return r
+}
+
+export function wrap_y(y: f32) -> f32 {
+    let fh: f32 = WORLD_H as f32
+    let mut r: f32 = y
+    if r < 0.0 { r = r + fh }
+    if r >= fh { r = r - fh }
+    return r
+}
+
+export function passable(terrain: ptr<u8>, c: i32, open: bool) -> bool {
+    let t: u8 = terrain[c]
+    if t == TERRAIN_LAND { return true }
+    if t == TERRAIN_PASS { return open }
+    return false
+}
+
+# Region of a cell: 1 for land reachable from the world's centre without a
+# pass, 0 for everything else. Computed once per terrain by flood fill.
+export function region_at(w: ptr<World>, x: f32, y: f32) -> i32 {
+    return w.zone[cell_index(x, y)] as i32
+}
+
+function flood_zones(w: ptr<World>) -> void {
+    let zone: ptr<u8> = w.zone
+    let terrain: ptr<u8> = w.terrain
+    let stack: ptr<i32> = w.cell_fill
+    for c in 0 to WORLD_CELLS {
+        zone[c] = 0 as u8
+    }
+    let start: i32 = (WORLD_H / 2) * WORLD_W + WORLD_W / 2
+    let mut top: i32 = 0
+    stack[0] = start
+    top = 1
+    zone[start] = 1 as u8
+    while top > 0 {
+        top = top - 1
+        let c: i32 = stack[top]
+        let x: i32 = c % WORLD_W
+        let y: i32 = c / WORLD_W
+        for d in 0 to 4 {
+            let mut nx: i32 = x
+            let mut ny: i32 = y
+            if d == 0 { nx = (x + 1) & (WORLD_W - 1) }
+            if d == 1 { nx = (x + WORLD_W - 1) & (WORLD_W - 1) }
+            if d == 2 { ny = (y + 1) & (WORLD_H - 1) }
+            if d == 3 { ny = (y + WORLD_H - 1) & (WORLD_H - 1) }
+            let nc: i32 = ny * WORLD_W + nx
+            if zone[nc] == (0 as u8) and terrain[nc] == TERRAIN_LAND {
+                zone[nc] = 1 as u8
+                stack[top] = nc
+                top = top + 1
+            }
+        }
+    }
+}
+
+# Smooth value noise on a lattice of `step` cells.
+function lattice(seed: u32, ix: i32, iy: i32) -> f32 {
+    let h: u32 = rng_hash(seed ^ rng_hash((ix as u32) * (73856093 as u32) ^ (iy as u32) * (19349663 as u32)))
+    return ((h >> 8) as f32) * (1.0 / 16777216.0)
+}
+
+function smooth(t: f32) -> f32 {
+    return t * t * (3.0 - 2.0 * t)
+}
+
+function value_noise(seed: u32, x: i32, y: i32, step: i32) -> f32 {
+    let n: i32 = WORLD_W / step
+    let gx: i32 = x / step
+    let gy: i32 = y / step
+    let fx: f32 = smooth(((x % step) as f32) / (step as f32))
+    let fy: f32 = smooth(((y % step) as f32) / (step as f32))
+    let a: f32 = lattice(seed, gx % n, gy % n)
+    let b: f32 = lattice(seed, (gx + 1) % n, gy % n)
+    let c: f32 = lattice(seed, gx % n, (gy + 1) % n)
+    let d: f32 = lattice(seed, (gx + 1) % n, (gy + 1) % n)
+    let top: f32 = a + (b - a) * fx
+    let bot: f32 = c + (d - c) * fx
+    return top + (bot - top) * fy
+}
+
+function ridge_center(y: i32, which: i32) -> f32 {
+    let fy: f32 = y as f32
+    if which == 0 {
+        return (WORLD_W as f32) * 0.25 + 4.0 * sinf(fy * 0.05)
+    }
+    return (WORLD_W as f32) * 0.75 + 4.0 * sinf(fy * 0.043 + 2.0)
+}
+
+function in_pass(y: i32) -> bool {
+    let a: i32 = WORLD_H / 4
+    let b: i32 = (3 * WORLD_H) / 4
+    if y >= a - 5 and y <= a + 5 { return true }
+    if y >= b - 5 and y <= b + 5 { return true }
+    return false
+}
+
+export function world_build_terrain(w: ptr<World>) -> void {
+    let terrain: ptr<u8> = w.terrain
+    let fert: ptr<f32> = w.fert
+    let food: ptr<f32> = w.food
+    let seed: u32 = w.seed
+    for y in 0 to WORLD_H {
+        let c0: f32 = ridge_center(y, 0)
+        let c1: f32 = ridge_center(y, 1)
+        for x in 0 to WORLD_W {
+            let c: i32 = y * WORLD_W + x
+            let fx: f32 = (x as f32) + 0.5
+            let mut d0: f32 = fx - c0
+            if d0 < 0.0 { d0 = 0.0 - d0 }
+            let mut d1: f32 = fx - c1
+            if d1 < 0.0 { d1 = 0.0 - d1 }
+            let mut t: u8 = TERRAIN_LAND
+            if d0 < 3.0 or d1 < 3.0 {
+                t = TERRAIN_RIDGE
+                if in_pass(y) { t = TERRAIN_PASS }
+            }
+            terrain[c] = t
+            let n1: f32 = value_noise(seed, x, y, 32)
+            let n2: f32 = value_noise(seed ^ (0x5bd1e995 as u32), x, y, 8)
+            let mut f: f32 = 0.25 + 0.6 * n1 + 0.25 * n2
+            if f > 1.0 { f = 1.0 }
+            if t == TERRAIN_RIDGE { f = 0.0 }
+            fert[c] = f
+            food[c] = f * 0.6
+        }
+    }
+    flood_zones(w)
+}
+
+# Row temperatures for this tick, from latitude and the climate model.
+export function world_update_temperature(w: ptr<World>) -> void {
+    let rows: ptr<f32> = w.temp_row
+    let shift: f32 = (w.climate.warming as f32) + SEASON_AMP * sinf(w.climate.season as f32)
+    for y in 0 to WORLD_H {
+        let lat: f32 = ((y as f32) + 0.5) / (WORLD_H as f32)
+        rows[y] = 0.5 - 0.42 * cosf(TWO_PI_F * lat) + shift
+    }
+}
+
+# Food regrows toward the cell's fertility, faster in the growing season.
+export function world_regrow(w: ptr<World>) -> void {
+    let food: ptr<f32> = w.food
+    let fert: ptr<f32> = w.fert
+    let season_mult: f32 = 1.0 + 0.45 * sinf(w.climate.season as f32)
+    let rate: f32 = REGROW * season_mult
+    for y in 0 to WORLD_H {
+        let row: i32 = y * WORLD_W
+        for x in 0 to WORLD_W {
+            let c: i32 = row + x
+            let f: f32 = food[c]
+            food[c] = f + rate * (fert[c] * FOOD_MAX - f)
+        }
+    }
+}
+
+export function world_climate_step(w: ptr<World>) -> void {
+    if w.warming_dir > 0 {
+        w.climate.target = WARM_TARGET
+    }
+    if w.warming_dir < 0 {
+        w.climate.target = 0.0
+    }
+    w.warming_dir = 0
+    Climate_step(&w.climate, 1.0)
+}

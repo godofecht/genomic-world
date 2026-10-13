@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Build and run the genomic simulator.
+#
+#   ./run.sh            live window
+#   ./run.sh record N   headless, N frames to out/world.gif
+#   ./run.sh bench      headless throughput and population genetics
+#   ./run.sh test       every self-checking test, plus a thread-count
+#                       determinism check
+#
+# OpenMP: Apple clang only links it when libomp's headers and library are on
+# the search paths. Without libomp the parallel loops compile serial and the
+# results are identical, only slower.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+for omp in /opt/homebrew/opt/libomp /usr/local/opt/libomp; do
+    if [ -d "$omp" ]; then
+        export CPATH="$omp/include${CPATH:+:$CPATH}"
+        export LIBRARY_PATH="$omp/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
+        break
+    fi
+done
+export FLOW_OPT_LEVEL="${FLOW_OPT_LEVEL:-3}"
+
+quiet() { grep -v -E "ensure_flowc|ℹ️|✅|^-{10,}|Program finished|^Exit code" || true; }
+
+case "${1:-gfx}" in
+    gfx)
+        flow gfx genomic_world.flow
+        ;;
+    record)
+        mkdir -p out
+        flow record genomic_world.flow --frames "${2:-300}" --stride "${3:-1}" \
+            --out out/frames --gif out/world.gif
+        ;;
+    bench)
+        flow run bench.flow 2>&1 | quiet
+        ;;
+    test)
+        fail=0
+        for t in tests/test_*.flow; do
+            echo "== $t"
+            if ! (cd tests && flow run "$(basename "$t")") 2>&1 | quiet; then
+                fail=1
+            fi
+            # flow run prints the program's exit code; a nonzero one fails.
+        done
+        echo "== determinism across thread counts"
+        h1=$(cd tests && OMP_NUM_THREADS=1 flow run determinism.flow 2>&1 | grep "^hash" || true)
+        h8=$(cd tests && OMP_NUM_THREADS=8 flow run determinism.flow 2>&1 | grep "^hash" || true)
+        echo "  1 thread : $h1"
+        echo "  8 threads: $h8"
+        if [ -z "$h1" ] || [ "$h1" != "$h8" ]; then
+            echo "FAIL: state differs between thread counts"
+            fail=1
+        fi
+        exit $fail
+        ;;
+    *)
+        echo "usage: $0 [gfx|record N [stride]|bench|test]" >&2
+        exit 2
+        ;;
+esac

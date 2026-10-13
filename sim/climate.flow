@@ -1,0 +1,23 @@
+# Climate, written as a Flow evolution model.
+#
+# season   phase of the annual cycle, one year is 200 ticks
+# warming  global offset added to every row's temperature
+# target   the forcing; the W key moves it between 0 and WARM_TARGET
+#
+# Warming relaxes toward the target with a time constant of 600 ticks, so a
+# change in forcing arrives gradually and the population has to keep up.
+
+flow Climate {
+    state season: f64 = 0.0
+    state warming: f64 = 0.0
+    state target: f64 = 0.0
+    param omega: f64 = 0.031415926535
+    param response: f64 = 0.0016666667
+
+    season evolves as omega
+    warming evolves as response * (target - warming)
+    target evolves as 0.0
+}
+
+const WARM_TARGET: f64 = 0.3
+const SEASON_AMP: f32 = 0.05

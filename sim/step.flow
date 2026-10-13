@@ -1,0 +1,108 @@
+# One tick of the world, in order:
+#
+#   climate    advance the Climate flow model, recompute row temperatures
+#   regrow     food moves toward each cell's fertility
+#   behave     sense, move, pay metabolic costs            parallel by agent
+#   index      counting sort of agents into cells
+#   feed       agents eat from their cell                  parallel by row
+#   reproduce  mate search, meiosis, mutation              serial
+#   compact    drop the dead, pack survivors and newborns
+
+import .config
+import .state
+import .rng
+import .world
+import .population
+import .behaviour
+import .reproduction
+
+export function sim_init(seed: u32) -> World {
+    let mut w: World = world_alloc(seed)
+    world_set_mu(&w, DEFAULT_MU)
+    world_build_terrain(&w)
+    world_update_temperature(&w)
+    pop_found(&w)
+    return w
+}
+
+# Rebuild terrain and founders from a new seed, keeping the allocation.
+export function sim_reseed(w: ptr<World>, seed: u32) -> void {
+    w.seed = seed
+    w.next_seed = seed
+    w.tick = 0 as u32
+    w.climate = Climate_new()
+    world_build_terrain(w)
+    world_update_temperature(w)
+    pop_found(w)
+}
+
+const PHASES: i32 = 7
+
+export function phase_name(k: i32) -> string {
+    if k == 0 { return "climate" }
+    if k == 1 { return "regrow" }
+    if k == 2 { return "behave" }
+    if k == 3 { return "index" }
+    if k == 4 { return "feed" }
+    if k == 5 { return "reproduce" }
+    return "compact"
+}
+
+# Run one phase of the tick. The bench times phases through this, so the
+# profiled tick and the real tick are the same code.
+export function sim_phase(w: ptr<World>, k: i32) -> void {
+    if k == 0 {
+        w.births = 0
+        w.stillborn = 0
+        w.starved = 0
+        w.old_age = 0
+        world_climate_step(w)
+        world_update_temperature(w)
+    } elif k == 1 {
+        world_regrow(w)
+    } elif k == 2 {
+        behave(w)
+    } elif k == 3 {
+        pop_index(w)
+    } elif k == 4 {
+        feed(w)
+    } elif k == 5 {
+        w.pending = reproduce(w)
+    } else {
+        pop_compact(w, w.pending)
+        w.tick = w.tick + (1 as u32)
+    }
+}
+
+export function sim_step(w: ptr<World>) -> void {
+    for k in 0 to PHASES {
+        sim_phase(w, k)
+    }
+}
+
+# Bottleneck: each agent survives with probability keep.
+export function sim_bottleneck(w: ptr<World>, keep: f32) -> void {
+    let mut st: u32 = rng_stream(w.seed, w.tick, 77 as u32)
+    for i in 0 to w.n {
+        if rng_unit(&st) >= keep {
+            w.en[i] = 0.0
+        }
+    }
+    pop_compact(w, w.n)
+    w.starved = 0
+}
+
+# Order-sensitive hash of the full agent state, for determinism checks.
+export function sim_state_hash(w: ptr<World>) -> u32 {
+    let mut h: u32 = rng_hash(w.n as u32)
+    for i in 0 to w.n {
+        h = rng_hash(h ^ w.seed_of[i])
+        h = rng_hash(h ^ ((w.px[i] * 4096.0) as u32))
+        h = rng_hash(h ^ ((w.en[i] * 65536.0) as u32))
+        let b: i32 = i * GENOME_WORDS
+        for k in 0 to GENOME_WORDS {
+            h = rng_hash(h ^ w.genome[b + k])
+        }
+    }
+    return h
+}
