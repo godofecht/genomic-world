@@ -10,6 +10,8 @@ import gsim.config
 import gsim.state
 import gsim.step
 import gsim.stats
+import gsim.canvas
+import gsim.render
 
 extern {
     function omp_get_max_threads() -> i32
@@ -59,6 +61,19 @@ function main() -> i32 {
         printf("  %-10s %7.3f ms/tick  %5.1f%%\n", phase_name(k),
                (phase_ns[k] as f64) / 1000000.0 / (BENCH_TICKS as f64),
                100.0 * (phase_ns[k] as f64) / (total as f64))
+    }
+
+    # Frame cost: stats plus a full render into the framebuffer, per view.
+    let cv: Canvas = canvas_new(WIN_W, WIN_H)
+    for v in 0 to 4 {
+        let ui: Ui = Ui { view: v, steps: 1, paused: false, mu_level: 1 }
+        let a: i64 = xp_now_ns()
+        for f in 0 to 50 {
+            stats_compute(&s, &w)
+            render_frame(cv, &w, &s, ui)
+        }
+        printf("  frame %-9s %7.3f ms (stats + render, %d agents)\n", view_name(v),
+               ((xp_now_ns() - a) as f64) / 1000000.0 / 50.0, w.n)
     }
     printf("state hash %u\n", sim_state_hash(&w))
     return 0

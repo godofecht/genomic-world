@@ -6,7 +6,8 @@
 #                genetic thermal optimum on the same scale; a well adapted
 #                agent disappears into its background
 #   2 FOOD       the resource field, agents as dim points
-#   3 LOAD       deleterious alleles carried, green clean to red heavy
+#   3 LOAD       deleterious alleles carried: dim clean, yellow one,
+#                orange two, red three or more, magenta homozygous
 
 import .config
 import .state
@@ -141,12 +142,24 @@ function draw_agents(cv: Canvas, w: ptr<World>, view: i32) -> void {
             b = 160
             sz = 1
         } elif view == VIEW_LOAD {
+            # Clean genomes dim, carriers by allele count, homozygotes magenta.
             let k: i32 = gen_burden(w.genome, i * GENOME_WORDS)
-            let mut u: f32 = (k as f32) / 6.0
-            if u > 1.0 { u = 1.0 }
-            r = clamp255(60.0 + 195.0 * u)
-            g = clamp255(210.0 - 150.0 * u)
-            b = clamp255(150.0 - 110.0 * u)
+            r = 30
+            g = 96
+            b = 84
+            if k == 1 {
+                r = 240
+                g = 214
+                b = 60
+            } elif k == 2 {
+                r = 250
+                g = 136
+                b = 40
+            } elif k >= 3 {
+                r = 240
+                g = 50
+                b = 40
+            }
             if w.load[i] > 0 {
                 r = 255
                 g = 60
