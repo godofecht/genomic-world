@@ -19,6 +19,7 @@ The GIF is produced by `./run.sh record` and is not committed.
 ./run.sh test         tests, determinism check, validation against theory
 ./run.sh validate     validation against theory only
 ./run.sh export       run headless, write a VCF sample to out/
+./run.sh equilibrium  calibrate, solve the attractors, compare cold and warm starts
 ```
 
 Requires Flow 2.0 (`flow` on the PATH) and a C11 compiler. With Homebrew
@@ -37,6 +38,7 @@ same results.
 | W | Warm the climate by 0.3, or cool it back |
 | M | Mutation rate: 1e-4, 5e-4, 2.5e-3 per locus per gamete |
 | X | Bottleneck: kill 90 percent at random |
+| A | Re-found the population on the mean-field attractor |
 | E | Export a sample of 1000 to out/sample.vcf |
 | R | New world from a new seed |
 
@@ -189,6 +191,62 @@ Seed 20261013, defaults, 3000 ticks (about 15 generations):
 - The deleterious burden climbs toward mutation-selection balance and rises
   with the mutation rate.
 
+## Attractors and warm start
+
+The patterns the agents produce relax toward fixed points of deterministic
+mean-field models. `sim/meanfield.flow` writes those models down, integrates
+them to their attractors, and `sim/warmstart.flow` founds the agents there.
+
+Mutation-selection balance at each deleterious locus is a Flow evolution
+model (`flow Purge`, one instance per locus):
+
+```
+q evolves as u (1 - q) - v q - s q (1 - q) (h + (1 - 2h) q) / wbar
+```
+
+Its attractor matches the fixed point of the exact discrete recursion at all
+16 loci (`tests/test_meanfield.flow`). It needs no calibration.
+
+The thermal cline is a reaction-diffusion system for the 16 thermal loci
+across 64 latitude bands: Gaussian stabilising selection toward local
+temperature, Nagylaki's dispersal term with the measured density gradient,
+mutation, and quasi-linkage-equilibrium disequilibrium
+`D_ij = sigma2 p_i' p_j' / r_ij` (Barton 1983). Dispersal is solved
+implicitly with a cyclic tridiagonal solve, so it converges in about 5800
+steps of one generation. Selection width and dispersal are measured from the
+agents (`sim/calibrate.flow`): lifetime reproductive success against
+phenotype mismatch at the birthplace gives omega2 = 0.040 at defaults, a
+clean Gaussian surface over 1.8 million deaths.
+
+Results from `./run.sh equilibrium` (seed 20261013, defaults, 40000 ticks
+per run, about 180 generations):
+
+| | Cold start | Warm start | Attractor |
+|---|---|---|---|
+| deleterious alleles per genome, tick 0 | 0.00 | 3.40 | 3.40 |
+| at tick 20000 | 0.99 | 3.36 | 3.40 |
+| at tick 40000 | 1.52 | 3.39 | 3.40 |
+| Purge transient from q = 0, tick 40000 | 1.63 predicted | | |
+| cline RMS from attractor, tick 0 | 0.39 | 0.003 | 0 |
+| cline RMS from attractor, tick 40000 | 0.061 | 0.060 | 0 |
+
+- A cold start needs about 931 generations (about 203,000 ticks, roughly
+  9 minutes at this run's speed) to reach 90 percent of the balance burden.
+  The Purge models predict that transient: 0.33 against 0.35 observed at
+  tick 5000, 1.03 against 0.99 at tick 20000. Solving the attractor takes
+  0.5 ms, and the warm start holds within 2 percent of it.
+- The cline attractor with linkage disequilibrium sits 0.038 RMS from the
+  agents' cline at the time it was calibrated; the linkage-equilibrium
+  version sits 0.070 away. The agents carry 1.2 to 3.4 times the
+  linkage-equilibrium genetic variance where the cline is steepest.
+- The cline attractor moves. Speed, size and sensing keep evolving under the
+  energy budget for hundreds of generations, so selection strengthens
+  (omega2 0.040 at tick 8000, 0.028 at tick 36000) and dispersal falls
+  (sigma2 401 to 354). Recalibrated at tick 36000, the attractor again sits
+  0.041 RMS from the agents. A warm start therefore skips the first 1500 to
+  4000 ticks of cline formation. The slow ecological drift after that still
+  has to be simulated.
+
 ## Known gaps
 
 These are limits of the model as it stands.
@@ -207,9 +265,12 @@ These are limits of the model as it stands.
   phenotype.
 - Deleterious alleles act on viability at birth only. Fecundity and adult
   survival are unaffected by them.
-- The spatial model has no closed-form check of its own. Cline width against
-  sigma / sqrt(s), and isolation by distance against 1 / Nb, are the
-  natural next validations; the founding structure has to decay first.
+- The cline is checked against a mean-field model (above), which still
+  misses by about 0.04 RMS, most at the cold edges. Isolation by distance
+  against 1 / Nb is not yet checked.
+- The other four traits have no attractor model: their selection comes from
+  the energy budget and has no closed form, so a warm start leaves them at
+  frequency one half.
 
 ## Performance
 
@@ -246,6 +307,9 @@ from seed 20261013, about 49k agents at the end, one run each.
 - `tests/test_evolution.flow`: a cline forms under thermal selection and not
   without it, closed passes raise F_ST, a higher mutation rate raises the
   burden.
+- `tests/test_meanfield.flow`: the cyclic solver, Purge attractors against
+  the discrete recursion, local adaptation without dispersal, a flat cline
+  under fast dispersal.
 - `tests/determinism.flow`: the same state hash at 1 and 8 threads.
 - `validate.flow`: the theory checks above.
 
@@ -256,6 +320,7 @@ genomic_world.flow     the windowed app
 bench.flow             headless benchmark
 validate.flow          genetic engine against theory
 export_run.flow        headless run and VCF export
+equilibrium.flow       attractors against cold and warm starts
 sim/config.flow        sizes and default constants
 sim/params.flow        GW_ environment overrides
 sim/state.flow         World and Agents records
@@ -263,6 +328,9 @@ sim/rng.flow           counter-based random numbers
 sim/bits.flow          popcount and masks
 sim/genome.flow        architecture, expression, meiosis, mutation
 sim/wf.flow            Wright-Fisher harness for validation
+sim/meanfield.flow     attractors: Purge flow model, reaction-diffusion cline
+sim/calibrate.flow     selection width, dispersal, density from the agents
+sim/warmstart.flow     founding the agents on the attractor
 sim/climate.flow       the Climate flow model
 sim/world.flow         terrain, regions, temperature, food
 sim/population.flow    founding, spatial index, compaction
