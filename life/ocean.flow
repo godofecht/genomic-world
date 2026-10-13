@@ -1,0 +1,43 @@
+# The ocean's slow drivers, as a Flow evolution model.
+#
+#   phase    position in the current regime cycle. Current strength runs
+#            from weak (phase 0) to strong (phase pi) and back, period
+#            OCEAN_PERIOD ticks.
+#   gx, gy   phases of the gyre forcing. They drift, so the gyres wander
+#            and the flow pattern never settles.
+#   ux, uy   phases of the nutrient upwelling pattern. They drift too, so
+#            rich water moves across the map.
+#
+# Together these make the fitness landscape move: what a body needs to
+# hold position, reach food or escape depends on how strong the currents
+# are and where the food is, and both change.
+
+flow Ocean {
+    state phase: f64 = 0.0
+    state gx: f64 = 0.0
+    state gy: f64 = 0.0
+    state ux: f64 = 0.0
+    state uy: f64 = 0.0
+    param omega: f64 = 0.0010471976
+    param gyre_drift_x: f64 = 0.0011
+    param gyre_drift_y: f64 = 0.0007
+    param upwell_drift_x: f64 = 0.0009
+    param upwell_drift_y: f64 = 0.0005
+
+    phase evolves as omega
+    gx evolves as gyre_drift_x
+    gy evolves as gyre_drift_y
+    ux evolves as upwell_drift_x
+    uy evolves as upwell_drift_y
+}
+
+const OCEAN_PERIOD: i32 = 6000
+
+extern {
+    function cos(x: f64) -> f64
+}
+
+# Current strength in [0.1, 1] of the maximum forcing.
+export function ocean_strength(o: ptr<Ocean>) -> f32 {
+    return (0.1 + 0.9 * (0.5 - 0.5 * cos(o.phase))) as f32
+}

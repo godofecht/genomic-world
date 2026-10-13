@@ -1,0 +1,283 @@
+# Two-dimensional incompressible flow: Stam's stable fluids.
+#
+# The fluid grid is FL_N x FL_N with periodic edges, one fluid cell per
+# 2 x 2 world cells. Velocities are in world cells per tick. Each tick:
+#
+#   force     u += f, a divergence-free gyre forcing from a stream function
+#             psi = F sin(k X + gx) sin(k Y + gy), F set by the Ocean model
+#   friction  u *= 1 - FL_DRAG (bottom friction; sets the current speed)
+#   advect    semi-Lagrangian: u(x) <- u(x - u dt), bilinear
+#   project   solve laplacian p = div u by Jacobi iteration and subtract
+#             grad p, so the flow stays divergence-free
+#   walls     cells over a ridge or a closed pass hold zero velocity, and
+#             the pressure solve treats them as no-flux boundaries
+#
+# Every step reads one buffer and writes another, so the parallel loops do
+# not depend on thread order.
+
+import "stdlib/memory.flow"
+import gsim.config
+import gsim.state
+import .ocean
+
+extern {
+    function sinf(x: f32) -> f32
+    function cosf(x: f32) -> f32
+    function sqrtf(x: f32) -> f32
+}
+
+const FL_N: i32 = 128
+const FL_CELLS: i32 = 16384
+const FL_DRAG: f32 = 0.02
+const FL_FORCE: f32 = 0.018
+const FL_K: f32 = 2.0
+const FL_JACOBI: i32 = 60
+
+struct Fluid {
+    u: ptr<f32>,
+    v: ptr<f32>,
+    u2: ptr<f32>,
+    v2: ptr<f32>,
+    p: ptr<f32>,
+    p2: ptr<f32>,
+    div: ptr<f32>,
+    solid: ptr<u8>,
+    strength: f32,
+    max_speed: f32,
+    mean_speed: f32,
+    div_before: f32,
+    amp_scale: f32
+}
+
+export function fluid_new() -> Fluid {
+    let n: i64 = FL_CELLS as i64
+    return Fluid {
+        u: alloc_f32(n), v: alloc_f32(n), u2: alloc_f32(n), v2: alloc_f32(n),
+        p: alloc_f32(n), p2: alloc_f32(n), div: alloc_f32(n),
+        solid: alloc_zeroed(n) as ptr<u8>,
+        strength: 0.0, max_speed: 0.0, mean_speed: 0.0, div_before: 0.0,
+        amp_scale: 1.0
+    }
+}
+
+# A fluid cell is solid when any of its four world cells is impassable.
+export function fluid_walls(f: ptr<Fluid>, env: ptr<World>) -> void {
+    for y in 0 to FL_N {
+        for x in 0 to FL_N {
+            let mut s: u8 = 0 as u8
+            for dy in 0 to 2 {
+                for dx in 0 to 2 {
+                    let c: i32 = (2 * y + dy) * WORLD_W + 2 * x + dx
+                    let t: u8 = env.terrain[c]
+                    if t == TERRAIN_RIDGE { s = 1 as u8 }
+                    if t == TERRAIN_PASS and !env.passes_open { s = 1 as u8 }
+                }
+            }
+            f.solid[y * FL_N + x] = s
+        }
+    }
+}
+
+function wrapi(i: i32) -> i32 {
+    return (i + FL_N) & (FL_N - 1)
+}
+
+# Bilinear sample of a fluid field at fluid coordinates (fx, fy), periodic.
+export function fl_sample(a: ptr<f32>, fx: f32, fy: f32) -> f32 {
+    let mut x: f32 = fx
+    let mut y: f32 = fy
+    let n: f32 = FL_N as f32
+    while x < 0.0 { x = x + n }
+    while y < 0.0 { y = y + n }
+    while x >= n { x = x - n }
+    while y >= n { y = y - n }
+    let x0: i32 = x as i32
+    let y0: i32 = y as i32
+    let tx: f32 = x - (x0 as f32)
+    let ty: f32 = y - (y0 as f32)
+    let x1: i32 = (x0 + 1) & (FL_N - 1)
+    let y1: i32 = (y0 + 1) & (FL_N - 1)
+    let a00: f32 = a[y0 * FL_N + x0]
+    let a10: f32 = a[y0 * FL_N + x1]
+    let a01: f32 = a[y1 * FL_N + x0]
+    let a11: f32 = a[y1 * FL_N + x1]
+    return (a00 * (1.0 - tx) + a10 * tx) * (1.0 - ty) + (a01 * (1.0 - tx) + a11 * tx) * ty
+}
+
+# Fluid velocity at a world position, in world cells per tick.
+export function fluid_u_at(f: ptr<Fluid>, wx: f32, wy: f32) -> f32 {
+    return fl_sample(f.u, wx * 0.5 - 0.5, wy * 0.5 - 0.5)
+}
+export function fluid_v_at(f: ptr<Fluid>, wx: f32, wy: f32) -> f32 {
+    return fl_sample(f.v, wx * 0.5 - 0.5, wy * 0.5 - 0.5)
+}
+
+# Pressure gradient at cell (x, y): zero in a wall; a wall neighbour of an
+# open cell carries that cell's own pressure (no flux through the wall).
+function fl_grad_x(p: ptr<f32>, solid: ptr<u8>, x: i32, y: i32) -> f32 {
+    let c: i32 = y * FL_N + x
+    if solid[c] != (0 as u8) { return 0.0 }
+    let ce: i32 = y * FL_N + wrapi(x + 1)
+    let cw: i32 = y * FL_N + wrapi(x - 1)
+    let mut pe: f32 = p[ce]
+    let mut pw: f32 = p[cw]
+    if solid[ce] != (0 as u8) { pe = p[c] }
+    if solid[cw] != (0 as u8) { pw = p[c] }
+    return 0.5 * (pe - pw)
+}
+
+function fl_grad_y(p: ptr<f32>, solid: ptr<u8>, x: i32, y: i32) -> f32 {
+    let c: i32 = y * FL_N + x
+    if solid[c] != (0 as u8) { return 0.0 }
+    let cs: i32 = wrapi(y + 1) * FL_N + x
+    let cn: i32 = wrapi(y - 1) * FL_N + x
+    let mut ps: f32 = p[cs]
+    let mut pn: f32 = p[cn]
+    if solid[cs] != (0 as u8) { ps = p[c] }
+    if solid[cn] != (0 as u8) { pn = p[c] }
+    return 0.5 * (ps - pn)
+}
+
+export function fluid_step(f: ptr<Fluid>, o: ptr<Ocean>) -> void {
+    let u: ptr<f32> = f.u
+    let v: ptr<f32> = f.v
+    let u2: ptr<f32> = f.u2
+    let v2: ptr<f32> = f.v2
+    let solid: ptr<u8> = f.solid
+    let strength: f32 = ocean_strength(o)
+    f.strength = strength
+    let amp: f32 = FL_FORCE * strength * f.amp_scale
+    let gx: f32 = o.gx as f32
+    let gy: f32 = o.gy as f32
+    let kk: f32 = 6.2831853 * FL_K / (FL_N as f32)
+    let keep: f32 = 1.0 - FL_DRAG
+
+    # Force and friction, then advect into the second buffers.
+    parallel for y in 0 to FL_N {
+        for x in 0 to FL_N {
+            let c: i32 = y * FL_N + x
+            let a: f32 = kk * (x as f32) + gx
+            let b: f32 = kk * (y as f32) + gy
+            u[c] = keep * (u[c] + amp * sinf(a) * cosf(b))
+            v[c] = keep * (v[c] - amp * cosf(a) * sinf(b))
+        }
+    }
+    parallel for y in 0 to FL_N {
+        for x in 0 to FL_N {
+            let c: i32 = y * FL_N + x
+            if solid[c] != (0 as u8) {
+                u2[c] = 0.0
+                v2[c] = 0.0
+            } else {
+                # Velocity is in world cells per tick; the grid is 2 world
+                # cells, so the back-trace is half the velocity.
+                let bx: f32 = (x as f32) - 0.5 * u[c]
+                let by: f32 = (y as f32) - 0.5 * v[c]
+                u2[c] = fl_sample(u, bx, by)
+                v2[c] = fl_sample(v, bx, by)
+            }
+        }
+    }
+
+    # Divergence of the advected field.
+    let div: ptr<f32> = f.div
+    parallel for y in 0 to FL_N {
+        for x in 0 to FL_N {
+            let c: i32 = y * FL_N + x
+            let r: f32 = u2[y * FL_N + wrapi(x + 1)]
+            let l: f32 = u2[y * FL_N + wrapi(x - 1)]
+            let t: f32 = v2[wrapi(y + 1) * FL_N + x]
+            let bo: f32 = v2[wrapi(y - 1) * FL_N + x]
+            div[c] = 0.5 * (r - l + t - bo)
+        }
+    }
+
+    let mut dsum: f32 = 0.0
+    for c in 0 to FL_CELLS {
+        dsum = dsum + div[c] * div[c]
+    }
+    f.div_before = sqrtf(dsum / (FL_CELLS as f32))
+
+    # Jacobi for L p = div, where L is exactly div(grad p) with the
+    # projection's own wall rules (fl_grad: a wall neighbour carries the
+    # cell's pressure; walls have zero gradient). Projection then removes
+    # the divergence exactly once the iteration converges. The diagonal of
+    # L at an open cell is -1/4 times its number of open neighbours.
+    let mut p: ptr<f32> = f.p
+    let mut q: ptr<f32> = f.p2
+    for it in 0 to FL_JACOBI {
+        parallel for y in 0 to FL_N {
+            for x in 0 to FL_N {
+                let c: i32 = y * FL_N + x
+                if solid[c] != (0 as u8) {
+                    q[c] = 0.0
+                } else {
+                    let mut open: i32 = 0
+                    if solid[y * FL_N + wrapi(x + 1)] == (0 as u8) { open = open + 1 }
+                    if solid[y * FL_N + wrapi(x - 1)] == (0 as u8) { open = open + 1 }
+                    if solid[wrapi(y + 1) * FL_N + x] == (0 as u8) { open = open + 1 }
+                    if solid[wrapi(y - 1) * FL_N + x] == (0 as u8) { open = open + 1 }
+                    if open == 0 {
+                        q[c] = p[c]
+                    } else {
+                        let lap: f32 = 0.5 * (fl_grad_x(p, solid, wrapi(x + 1), y) - fl_grad_x(p, solid, wrapi(x - 1), y))
+                                     + 0.5 * (fl_grad_y(p, solid, x, wrapi(y + 1)) - fl_grad_y(p, solid, x, wrapi(y - 1)))
+                        let diag: f32 = -0.25 * (open as f32)
+                        q[c] = p[c] + (div[c] - lap) / diag
+                    }
+                }
+            }
+        }
+        let t: ptr<f32> = p
+        p = q
+        q = t
+    }
+    f.p = p
+    f.p2 = q
+
+    # Subtract the pressure gradient; walls stay at rest.
+    parallel for y in 0 to FL_N {
+        for x in 0 to FL_N {
+            let c: i32 = y * FL_N + x
+            if solid[c] != (0 as u8) {
+                u[c] = 0.0
+                v[c] = 0.0
+            } else {
+                let gxp: f32 = fl_grad_x(p, solid, x, y)
+                let gyp: f32 = fl_grad_y(p, solid, x, y)
+                u[c] = u2[c] - gxp
+                v[c] = v2[c] - gyp
+            }
+        }
+    }
+}
+
+# Mean and maximum speed; returns the RMS divergence left after projection.
+export function fluid_stats(f: ptr<Fluid>) -> f32 {
+    let mut s: f32 = 0.0
+    let mut m: f32 = 0.0
+    let mut worst: f32 = 0.0
+    for y in 0 to FL_N {
+        for x in 0 to FL_N {
+            let c: i32 = y * FL_N + x
+            let sp: f32 = f.u[c] * f.u[c] + f.v[c] * f.v[c]
+            s = s + sp
+            if sp > m { m = sp }
+            if f.solid[c] == (0 as u8) {
+                let d: f32 = 0.5 * (f.u[y * FL_N + wrapi(x + 1)] - f.u[y * FL_N + wrapi(x - 1)]
+                                  + f.v[wrapi(y + 1) * FL_N + x] - f.v[wrapi(y - 1) * FL_N + x])
+                worst = worst + d * d
+            }
+        }
+    }
+    f.mean_speed = sqrtf(s / (FL_CELLS as f32))
+    f.max_speed = sqrtf(m)
+    return sqrtf(worst / (FL_CELLS as f32))
+}
+
+# Vorticity at fluid cell (x, y), for drawing.
+export function fluid_curl(f: ptr<Fluid>, x: i32, y: i32) -> f32 {
+    let dvdx: f32 = 0.5 * (f.v[y * FL_N + wrapi(x + 1)] - f.v[y * FL_N + wrapi(x - 1)])
+    let dudy: f32 = 0.5 * (f.u[wrapi(y + 1) * FL_N + x] - f.u[wrapi(y - 1) * FL_N + x])
+    return dvdx - dudy
+}

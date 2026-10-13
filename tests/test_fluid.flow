@@ -1,0 +1,94 @@
+# The fluid solver.
+#
+#   1  linear steady state: at small amplitude, advection is negligible and
+#      the forced, damped flow settles at u = f (1 - drag) / drag, exactly
+#      the discrete fixed point. Checked cell by cell against the forcing.
+#   2  projection removes at least 90 percent of the divergence the
+#      advection step creates, at full forcing
+#   3  wall cells hold zero velocity
+#   4  2000 steps at full forcing stay finite and bounded
+
+import gsim.config
+import gsim.state
+import gsim.world
+import glife.ocean
+import glife.fluid
+
+extern {
+    function sinf(x: f32) -> f32
+    function cosf(x: f32) -> f32
+    function fabsf(x: f32) -> f32
+}
+
+function main() -> i32 {
+    let mut f: Fluid = fluid_new()
+    let mut o: Ocean = Ocean_new()
+    o.omega = 0.0
+    o.phase = 3.14159265
+    o.gyre_drift_x = 0.0
+    o.gyre_drift_y = 0.0
+    f.amp_scale = 0.001
+    for t in 0 to 1500 {
+        fluid_step(&f, &o)
+    }
+    let amp: f32 = FL_FORCE * ocean_strength(&o) * f.amp_scale
+    let gain: f32 = (1.0 - FL_DRAG) / FL_DRAG
+    let kk: f32 = 6.2831853 * FL_K / (FL_N as f32)
+    let mut worst: f32 = 0.0
+    let mut peak: f32 = 0.0
+    for y in 0 to FL_N {
+        for x in 0 to FL_N {
+            let want: f32 = gain * amp * sinf(kk * (x as f32)) * cosf(kk * (y as f32))
+            let e: f32 = fabsf(f.u[y * FL_N + x] - want)
+            if e > worst { worst = e }
+            if fabsf(want) > peak { peak = fabsf(want) }
+        }
+    }
+    printf("  linear steady state: worst error %.2e of peak %.2e (%.2f%%)\n", worst as f64, peak as f64,
+           100.0 * (worst / peak) as f64)
+    if worst > 0.02 * peak {
+        printf("FAIL 1 steady state\n")
+        return 1
+    }
+
+    let mut env: World = world_alloc(99 as u32)
+    world_build_terrain(&env)
+    let mut g: Fluid = fluid_new()
+    fluid_walls(&g, &env)
+    let mut o2: Ocean = Ocean_new()
+    o2.phase = 3.14159265
+    o2.omega = 0.0
+    let mut ratio_max: f32 = 0.0
+    let mut top: f32 = 0.0
+    for t in 0 to 2000 {
+        fluid_step(&g, &o2)
+        let after: f32 = fluid_stats(&g)
+        if t > 50 and g.div_before > 0.0 {
+            let r: f32 = after / g.div_before
+            if r > ratio_max { ratio_max = r }
+        }
+        if g.max_speed > top { top = g.max_speed }
+        if g.mean_speed != g.mean_speed {
+            printf("FAIL 4 NaN at step %d\n", t)
+            return 4
+        }
+    }
+    printf("  full forcing: divergence after/before projection at most %.3f; mean speed %.3f, peak %.3f cells/tick\n",
+           ratio_max as f64, g.mean_speed as f64, top as f64)
+    if ratio_max > 0.1 {
+        printf("FAIL 2 projection leaves too much divergence\n")
+        return 2
+    }
+    for c in 0 to FL_CELLS {
+        if g.solid[c] != (0 as u8) and (g.u[c] != 0.0 or g.v[c] != 0.0) {
+            printf("FAIL 3 wall cell moving\n")
+            return 3
+        }
+    }
+    if top > 5.0 or g.mean_speed < 0.05 {
+        printf("FAIL 4 speeds out of range\n")
+        return 4
+    }
+    printf("OK fluid\n")
+    return 0
+}
