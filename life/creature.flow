@@ -11,7 +11,7 @@ import .lconfig
 import .lgenome
 import .develop
 
-# 25 four-byte fields: CR_BYTES must match.
+# 27 four-byte fields: CR_BYTES must match.
 struct Creature {
     px: f32,
     py: f32,
@@ -26,6 +26,7 @@ struct Creature {
     ecap: f32,
     range: f32,
     range_side: f32,
+    drag: f32,
     thr: f32,
     topt: f32,
     age: i32,
@@ -33,6 +34,7 @@ struct Creature {
     mouths: i32,
     eyes: i32,
     cells: i32,
+    width: i32,
     kills: i32,
     gen: i32,
     seed: u32,
@@ -40,7 +42,7 @@ struct Creature {
     plan: u32
 }
 
-const CR_BYTES: i64 = 100
+const CR_BYTES: i64 = 108
 
 # Per-cell contribution to mass and to upkeep, indexed by cell type.
 function l_cell_mass(t: i32) -> f32 {
@@ -85,10 +87,28 @@ export function express(c: ptr<Creature>, g: ptr<u32>, dev: ptr<u32>, body: ptr<
     c[i].mass = mass
     c[i].upkeep = upk
     c[i].cells = cells
-    let mut v: f32 = 0.15 + 1.5 * (motors as f32) / mass
-    if v > 1.6 { v = 1.6 }
+    # Swimming. Motors push; the water resists in proportion to the body's
+    # frontal width plus skin friction on every cell. Top speed relative to
+    # the water is thrust over drag, so a narrow body swims faster on the
+    # same motors. Swimming power, and so its energy cost, is drag times
+    # speed squared.
+    let mut rows: i32 = 0
+    for y in 0 to BODY {
+        let mut any: bool = false
+        for x in 0 to BODY {
+            if body[bb + y * BODY + x] != (0 as u8) { any = true }
+        }
+        if any { rows = rows + 1 }
+    }
+    c[i].width = rows
+    let drag: f32 = 0.35 + 0.35 * (((rows - 1) / 2) as f32) + 0.03 * (cells as f32)
+    c[i].drag = drag
+    let mut v: f32 = 0.4 * (motors as f32) / drag
+    if v > 2.0 { v = 2.0 }
     c[i].vmax = v
-    c[i].bite = 0.06 * (mouths as f32)
+    # Spikes are carnivore anatomy: they cut grazing efficiency, so a
+    # predator cannot fall back on plants when prey are scarce.
+    c[i].bite = 0.06 * (mouths as f32) / (1.0 + (spikes as f32))
     c[i].mouths = mouths
     c[i].attack = spikes as f32
     c[i].defense = (armor as f32) + 0.5 * (spikes as f32)

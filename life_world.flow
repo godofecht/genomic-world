@@ -8,6 +8,11 @@
 # kill, how much it costs to run. A one-layer brain, also genetic, turns
 # what the eyes see into turning and thrust.
 #
+# They live in water: a 2D incompressible flow (stable fluids) driven by
+# gyres whose strength cycles and whose pattern drifts, around the ridges
+# and through the passes. Bodies drift with the current and swim against
+# drag, so body shape matters. Nutrients upwell in patches that move.
+#
 # Founders are all the same three-cell grazer. Predators, armour, eyes and
 # new body plans have to evolve. Mating needs a similar developmental
 # genotype, so body plans that drift apart stop interbreeding.
@@ -42,7 +47,7 @@ function main() -> i32 {
     let mut l: Life = life_init(seed)
     let mut cs: Census = census_new()
     let cv: Canvas = canvas_new(L_WIN_W, L_WIN_H)
-    let mut ui: LifeUi = LifeUi { steps: 4, paused: false, zoom: false, zx: 96, zy: 96 }
+    let mut ui: LifeUi = LifeUi { steps: 8, paused: false, zoom: false, zx: 96, zy: 96, flow_view: false }
     let mut keys: LKeys = LKeys { held: [false, false, false, false, false, false, false, false] }
     census_take(&cs, l.cr, l.n)
 
@@ -50,13 +55,14 @@ function main() -> i32 {
     let mut frame: i32 = 0
     while gfx_frame_pump(g) {
         if tap(g, &keys, 0, KEY_P) { ui.paused = !ui.paused }
-        if tap(g, &keys, 1, KEY_B) { l.env.passes_open = !l.env.passes_open }
+        if tap(g, &keys, 1, KEY_B) { life_set_passes(&l, !l.env.passes_open) }
         if tap(g, &keys, 2, KEY_W) {
             if l.env.climate.target < 0.15 { l.env.warming_dir = 1 } else { l.env.warming_dir = -1 }
         }
         if tap(g, &keys, 3, KEY_RBRACKET) and ui.steps < 64 { ui.steps = ui.steps * 2 }
         if tap(g, &keys, 4, KEY_LBRACKET) and ui.steps > 1 { ui.steps = ui.steps / 2 }
         if tap(g, &keys, 6, KEY_Z) { ui.zoom = !ui.zoom }
+        if tap(g, &keys, 7, KEY_F) { ui.flow_view = !ui.flow_view }
         if ui.zoom {
             if gfx_key_down(g, KEY_LEFT) { ui.zx = (ui.zx + WORLD_W - 1) % WORLD_W }
             if gfx_key_down(g, KEY_RIGHT) { ui.zx = (ui.zx + 1) % WORLD_W }
@@ -73,6 +79,10 @@ function main() -> i32 {
                 life_step(&l)
                 if (l.tick % (64 as u32)) == (0 as u32) {
                     census_take(&cs, l.cr, l.n)
+                    census_selection(&cs, l.par_v, l.par_w, l.par_n, l.fluid.strength)
+                    l.par_v = 0.0
+                    l.par_w = 0.0
+                    l.par_n = 0.0
                     census_record(&cs, l.n)
                 }
             }

@@ -5,15 +5,18 @@
 # parallel genome, body, developmental and brain blocks.
 #
 # One tick:
-#   environment  climate, temperature, food regrowth
+#   environment  climate and temperature; the Ocean model advances; the
+#                fluid steps (sim: life/fluid.flow); upwelling sets where
+#                food grows; food regrows, then is carried by the water
 #   index        counting sort of organisms by cell
 #   sense, act   eyes sample food ahead and to each side at the sensing
 #                range; the nearest prey and threat in range are found
 #                through the index; the brain turns and sets thrust; the
 #                body pays upkeep, movement and thermal costs   parallel
 #   index        again, after movement
-#   feed         per cell: mouths graze, then organisms with spikes and a
-#                mouth attack one other organism in the cell   parallel by row
+#   feed         per cell, mouths graze                     parallel by row;
+#                then organisms with spikes and a mouth strike one organism
+#                in the surrounding 3 x 3 cells               serial
 #   reproduce    mate in the 3 x 3 neighbourhood, only with a compatible
 #                developmental genotype; child develops      serial
 #   compact      drop the dead
@@ -31,6 +34,8 @@ import .lgenome
 import .develop
 import .brain
 import .creature
+import .ocean
+import .fluid
 
 extern {
     function cosf(x: f32) -> f32
@@ -67,7 +72,19 @@ struct Life {
     births: i32,
     kills: i32,
     starved: i32,
-    rejected: i32
+    rejected: i32,
+
+    # the ocean
+    fluid: Fluid,
+    ocean: Ocean,
+    base_fert: ptr<f32>,
+    food2: ptr<f32>,
+
+    # parents' traits summed over births since the last census, for the
+    # selection differentials
+    par_v: f64,
+    par_w: f64,
+    par_n: f64
 }
 
 export function life_new(seed: u32) -> Life {
@@ -100,8 +117,17 @@ export function life_new(seed: u32) -> Life {
         start: alloc_i32((WORLD_CELLS + 1) as i64),
         fill: alloc_i32(WORLD_CELLS as i64),
         order: alloc_i32(m),
-        births: 0, kills: 0, starved: 0, rejected: 0
+        births: 0, kills: 0, starved: 0, rejected: 0,
+        fluid: fluid_new(),
+        ocean: Ocean_new(),
+        base_fert: alloc_f32(WORLD_CELLS as i64),
+        food2: alloc_f32(WORLD_CELLS as i64),
+        par_v: 0.0, par_w: 0.0, par_n: 0.0
     }
+    for c in 0 to WORLD_CELLS {
+        l.base_fert[c] = l.env.fert[c]
+    }
+    fluid_walls(&l.fluid, &l.env)
     return l
 }
 
@@ -143,6 +169,12 @@ export function life_found(l: ptr<Life>) -> void {
             }
             l.genome[i * L_WORDS + 7] = mark[best]
             l.genome[i * L_WORDS + 15] = mark[best]
+            let k: i32 = gen_poisson(&st, L_FOUNDER_MUTATIONS, expf(0.0 - L_FOUNDER_MUTATIONS))
+            for m in 0 to k {
+                let locus: i32 = rng_below(&st, LOC_THR)
+                let w: i32 = (locus >> 5) + L_CHROMS * rng_below(&st, 2)
+                l.genome[i * L_WORDS + w] = l.genome[i * L_WORDS + w] ^ ((1 as u32) << ((locus & 31) as u32))
+            }
             express(l.cr, l.genome, l.dev, l.body, l.brain, i)
             l.cr[i].px = x
             l.cr[i].py = y
@@ -211,6 +243,7 @@ export function life_act(l: ptr<Life>) -> void {
     # Others are read from a snapshot taken before anyone moves, so the
     # result does not depend on which thread runs first. cr2 is free until
     # compaction.
+    let fl: ptr<Fluid> = &l.fluid
     let snap: ptr<Creature> = l.cr2
     let copied: ptr<void> = memcpy(snap as ptr<void>, cr as ptr<void>, (n as i64) * CR_BYTES)
     parallel for i in 0 to n {
@@ -277,9 +310,10 @@ export function life_act(l: ptr<Life>) -> void {
         let turn: f32 = brain_turn(brain, i * BRAIN_W, inp)
         let thrust: f32 = brain_thrust(brain, i * BRAIN_W, inp)
         let nh: f32 = h + 0.6 * turn + 0.1 * (rng_unit(&st) - 0.5)
+        # Swim relative to the water, and drift with it.
         let v: f32 = thrust * cr[i].vmax
-        let nx: f32 = wrap_x(x + v * cosf(nh))
-        let ny: f32 = wrap_y(y + v * sinf(nh))
+        let nx: f32 = wrap_x(x + v * cosf(nh) + fluid_u_at(fl, x, y))
+        let ny: f32 = wrap_y(y + v * sinf(nh) + fluid_v_at(fl, x, y))
         let mut moved: f32 = 0.0
         if passable(terrain, cell_index(nx, ny), open) {
             cr[i].px = nx
@@ -291,7 +325,7 @@ export function life_act(l: ptr<Life>) -> void {
         }
         let row: i32 = (cr[i].py as i32) & (WORLD_H - 1)
         let dt: f32 = temp_row[row] - cr[i].topt
-        let cost: f32 = L_UPKEEP * cr[i].upkeep + L_MOVE_COST * cr[i].mass * moved * moved
+        let cost: f32 = L_UPKEEP * cr[i].upkeep + L_MOVE_COST * cr[i].drag * moved * moved
                       + THERMAL_L * cr[i].mass * dt * dt
         cr[i].en = cr[i].en - cost
         if rng_unit(&st) < L_MORTALITY {
@@ -302,8 +336,8 @@ export function life_act(l: ptr<Life>) -> void {
     }
 }
 
-# Grazing, then predation, cell by cell. Every interaction is between
-# organisms standing in the same cell, so rows run in parallel.
+# Grazing, cell by cell: every mouth eats from the cell it stands in, so
+# rows run in parallel. Predation follows in its own pass.
 export function life_feed(l: ptr<Life>) -> void {
     let cr: ptr<Creature> = l.cr
     let food: ptr<f32> = l.env.food
@@ -333,46 +367,57 @@ export function life_feed(l: ptr<Life>) -> void {
                     }
                 }
                 food[c] = f
-                for k in s0 to s1 {
-                    let i: i32 = order[k]
-                    if cr[i].en > 0.0 and cr[i].attack > 0.0 and cr[i].mouths > 0 {
-                        let mut st: u32 = rng_stream(cr[i].seed, tick, 3 as u32)
-                        let mut victim: i32 = -1
-                        for q in s0 to s1 {
-                            let j: i32 = order[q]
-                            if j != i and victim < 0 and cr[j].en > 0.0 and cr[j].defense < cr[i].attack {
-                                victim = j
-                            }
-                        }
-                        cr[i].en = cr[i].en - L_ATTACK_COST
-                        if victim >= 0 {
-                            let a: f32 = cr[i].attack
-                            let d: f32 = cr[victim].defense
-                            if rng_unit(&st) < a / (a + d + 1.0) {
-                                let mut dmg: f32 = 0.4 * a
-                                if dmg > cr[victim].en { dmg = cr[victim].en }
-                                cr[victim].en = cr[victim].en - dmg
-                                let mut gain: f32 = L_MEAT_EFF * dmg
-                                if cr[victim].en <= 0.0 {
-                                    gain = gain + 0.5 * cr[victim].mass
-                                    cr[victim].en = -2.0
-                                    cr[i].kills = cr[i].kills + 1
-                                    kills[y] = kills[y] + 1
-                                }
-                                cr[i].en = cr[i].en + gain
-                                if cr[i].en > cr[i].ecap { cr[i].en = cr[i].ecap }
-                            }
-                        }
+            }
+        }
+    }
+    life_predation(l)
+}
+
+# Predation. A body spans up to 2.3 world cells, so an organism with a spike
+# and a mouth can strike any organism in its own or the eight surrounding
+# cells whose defence is below its attack. The victim is chosen uniformly
+# among those. Serial, in slot order, so the outcome does not depend on
+# threads.
+export function life_predation(l: ptr<Life>) -> void {
+    let cr: ptr<Creature> = l.cr
+    for i in 0 to l.n {
+        if cr[i].en > 0.0 and cr[i].attack > 0.0 and cr[i].mouths > 0 {
+            let mut st: u32 = rng_stream(cr[i].seed, l.tick, 3 as u32)
+            let cx: i32 = cr[i].px as i32
+            let cy: i32 = cr[i].py as i32
+            let mut victim: i32 = -1
+            let mut seen: i32 = 0
+            for kk in 0 to 9 {
+                let c: i32 = ((cy + kk / 3 - 1) & (WORLD_H - 1)) * WORLD_W + ((cx + kk % 3 - 1) & (WORLD_W - 1))
+                for q in l.start[c] to l.start[c + 1] {
+                    let j: i32 = l.order[q]
+                    if j != i and cr[j].en > 0.0 and cr[j].defense < cr[i].attack {
+                        seen = seen + 1
+                        if rng_below(&st, seen) == 0 { victim = j }
                     }
+                }
+            }
+            cr[i].en = cr[i].en - L_ATTACK_COST
+            if victim >= 0 {
+                let a: f32 = cr[i].attack
+                let d: f32 = cr[victim].defense
+                if rng_unit(&st) < a / (a + d + 1.0) {
+                    let mut dmg: f32 = 0.4 * a
+                    if dmg > cr[victim].en { dmg = cr[victim].en }
+                    cr[victim].en = cr[victim].en - dmg
+                    let mut gain: f32 = L_MEAT_EFF * dmg
+                    if cr[victim].en <= 0.0 {
+                        gain = gain + 0.5 * cr[victim].mass
+                        cr[victim].en = -2.0
+                        cr[i].kills = cr[i].kills + 1
+                        l.kills = l.kills + 1
+                    }
+                    cr[i].en = cr[i].en + gain
+                    if cr[i].en > cr[i].ecap { cr[i].en = cr[i].ecap }
                 }
             }
         }
     }
-    let mut total: i32 = 0
-    for y in 0 to WORLD_H {
-        total = total + kills[y]
-    }
-    l.kills = l.kills + total
 }
 
 function l_can_mate(c: ptr<Creature>, j: i32) -> bool {
@@ -440,6 +485,9 @@ export function life_reproduce(l: ptr<Life>) -> i32 {
                     cr[c].seed = l_fresh_seed(l)
                     total = total + 1
                     l.births = l.births + 1
+                    l.par_v = l.par_v + (cr[i].vmax as f64) + (cr[mate].vmax as f64)
+                    l.par_w = l.par_w + (cr[i].width as f64) + (cr[mate].width as f64)
+                    l.par_n = l.par_n + 2.0
                 }
             }
         }
@@ -503,7 +551,11 @@ export function life_step(l: ptr<Life>) -> void {
     l.rejected = 0
     world_climate_step(&l.env)
     world_update_temperature(&l.env)
+    Ocean_step(&l.ocean, 1.0)
+    fluid_step(&l.fluid, &l.ocean)
+    life_upwell(l)
     world_regrow(&l.env)
+    life_advect_food(l)
     life_index(l)
     life_act(l)
     life_index(l)
@@ -511,6 +563,66 @@ export function life_step(l: ptr<Life>) -> void {
     let total: i32 = life_reproduce(l)
     life_compact(l, total)
     l.tick = l.tick + (1 as u32)
+}
+
+# Nutrient upwelling: fertility is the land's base fertility times a
+# pattern of rich patches that drifts with the Ocean model. Recomputed
+# every 16 ticks.
+export function life_upwell(l: ptr<Life>) -> void {
+    if (l.tick % (16 as u32)) != (0 as u32) { return }
+    let fert: ptr<f32> = l.env.fert
+    let base: ptr<f32> = l.base_fert
+    let ux: f32 = l.ocean.ux as f32
+    let uy: f32 = l.ocean.uy as f32
+    let kx: f32 = 6.2831853 * 2.0 / (WORLD_W as f32)
+    let ky: f32 = 6.2831853 * 2.0 / (WORLD_H as f32)
+    parallel for y in 0 to WORLD_H {
+        let sy: f32 = 0.5 + 0.5 * sinf(ky * (y as f32) + uy)
+        for x in 0 to WORLD_W {
+            let c: i32 = y * WORLD_W + x
+            let sx: f32 = 0.5 + 0.5 * sinf(kx * (x as f32) + ux)
+            let mut f: f32 = base[c] * (0.15 + 2.4 * sx * sy)
+            if f > 1.0 { f = 1.0 }
+            fert[c] = f
+        }
+    }
+}
+
+# Food is carried by the water: semi-Lagrangian advection on the world grid.
+export function life_advect_food(l: ptr<Life>) -> void {
+    let food: ptr<f32> = l.env.food
+    let out: ptr<f32> = l.food2
+    let fl: ptr<Fluid> = &l.fluid
+    let fw: f32 = WORLD_W as f32
+    let fh: f32 = WORLD_H as f32
+    parallel for y in 0 to WORLD_H {
+        for x in 0 to WORLD_W {
+            let cxw: f32 = (x as f32) + 0.5
+            let cyw: f32 = (y as f32) + 0.5
+            let mut bx: f32 = cxw - fluid_u_at(fl, cxw, cyw) - 0.5
+            let mut by: f32 = cyw - fluid_v_at(fl, cxw, cyw) - 0.5
+            if bx < 0.0 { bx = bx + fw }
+            if by < 0.0 { by = by + fh }
+            if bx >= fw { bx = bx - fw }
+            if by >= fh { by = by - fh }
+            let x0: i32 = bx as i32
+            let y0: i32 = by as i32
+            let tx: f32 = bx - (x0 as f32)
+            let ty: f32 = by - (y0 as f32)
+            let x1: i32 = (x0 + 1) & (WORLD_W - 1)
+            let y1: i32 = (y0 + 1) & (WORLD_H - 1)
+            let a: f32 = food[y0 * WORLD_W + x0] * (1.0 - tx) + food[y0 * WORLD_W + x1] * tx
+            let b: f32 = food[y1 * WORLD_W + x0] * (1.0 - tx) + food[y1 * WORLD_W + x1] * tx
+            out[y * WORLD_W + x] = a * (1.0 - ty) + b * ty
+        }
+    }
+    l.food2 = food
+    l.env.food = out
+}
+
+export function life_set_passes(l: ptr<Life>, open: bool) -> void {
+    l.env.passes_open = open
+    fluid_walls(&l.fluid, &l.env)
 }
 
 export function life_init(seed: u32) -> Life {

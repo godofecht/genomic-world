@@ -57,3 +57,6 @@ const L_FERTILITY: f32 = 1.0
 
 # Founders.
 const L_FOUNDERS: i32 = 3000
+# Mean number of random mutations each founder carries in its developmental
+# and brain loci: standing variation, as any real founding population has.
+const L_FOUNDER_MUTATIONS: f32 = 3.0

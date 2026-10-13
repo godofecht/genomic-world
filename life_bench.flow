@@ -20,7 +20,7 @@ function main() -> i32 {
     if v != null { ticks = atoi(v) }
     let mut l: Life = life_init(params_seed(20261014 as u32))
     let mut cs: Census = census_new()
-    printf(" tick     n  births  kills  starved  rejected  plans  species  cells  eyes  speed  armor  predators  max gen  ms/tick\n")
+    printf(" tick     n  births  kills  plans  species  cells  eyes  width  speed  armor  predators  current  S_speed  S_width  max gen  ms/tick\n")
     let t0: i64 = xp_now_ns()
     let mut tl: i64 = t0
     let mut agent_ticks: f64 = 0.0
@@ -30,10 +30,15 @@ function main() -> i32 {
         if t % 500 == 0 {
             let now: i64 = xp_now_ns()
             census_take(&cs, l.cr, l.n)
-            printf("%5d %5d %7d %6d %8d %9d %6d %8d %6.2f %5.2f %6.2f %6.2f %10.3f %8d %8.3f\n",
-                   t, l.n, l.births, l.kills, l.starved, l.rejected, cs.plans, cs.morphospecies,
-                   cs.mean_cells as f64, cs.mean_eyes as f64, cs.mean_speed as f64, cs.mean_armor as f64,
-                   cs.predators as f64, cs.max_gen, ((now - tl) as f64) / 1000000.0 / 500.0)
+            census_selection(&cs, l.par_v, l.par_w, l.par_n, l.fluid.strength)
+            l.par_v = 0.0
+            l.par_w = 0.0
+            l.par_n = 0.0
+            printf("%5d %5d %7d %6d %6d %8d %6.2f %5.2f %6.2f %6.2f %6.2f %10.3f %8.2f %8.3f %8.3f %8d %8.3f\n",
+                   t, l.n, l.births, l.kills, cs.plans, cs.morphospecies,
+                   cs.mean_cells as f64, cs.mean_eyes as f64, cs.mean_width as f64, cs.mean_speed as f64,
+                   cs.mean_armor as f64, cs.predators as f64, cs.strength as f64, cs.sel_v as f64,
+                   cs.sel_w as f64, cs.max_gen, ((now - tl) as f64) / 1000000.0 / 500.0)
             tl = xp_now_ns()
         }
         if l.n == 0 {

@@ -31,7 +31,7 @@ const FL_CELLS: i32 = 16384
 const FL_DRAG: f32 = 0.02
 const FL_FORCE: f32 = 0.018
 const FL_K: f32 = 2.0
-const FL_JACOBI: i32 = 60
+const FL_JACOBI: i32 = 20
 
 struct Fluid {
     u: ptr<f32>,
@@ -41,7 +41,11 @@ struct Fluid {
     p: ptr<f32>,
     p2: ptr<f32>,
     div: ptr<f32>,
+    gx: ptr<f32>,
+    gy: ptr<f32>,
     solid: ptr<u8>,
+    open: ptr<u8>,
+    near: ptr<u8>,
     strength: f32,
     max_speed: f32,
     mean_speed: f32,
@@ -54,7 +58,10 @@ export function fluid_new() -> Fluid {
     return Fluid {
         u: alloc_f32(n), v: alloc_f32(n), u2: alloc_f32(n), v2: alloc_f32(n),
         p: alloc_f32(n), p2: alloc_f32(n), div: alloc_f32(n),
+        gx: alloc_f32(n), gy: alloc_f32(n),
         solid: alloc_zeroed(n) as ptr<u8>,
+        open: alloc_zeroed(n) as ptr<u8>,
+        near: alloc_zeroed(n) as ptr<u8>,
         strength: 0.0, max_speed: 0.0, mean_speed: 0.0, div_before: 0.0,
         amp_scale: 1.0
     }
@@ -74,6 +81,29 @@ export function fluid_walls(f: ptr<Fluid>, env: ptr<World>) -> void {
                 }
             }
             f.solid[y * FL_N + x] = s
+        }
+    }
+    # Open-neighbour count per cell: the pressure solve's diagonal.
+    for y in 0 to FL_N {
+        for x in 0 to FL_N {
+            let mut k: i32 = 0
+            if f.solid[y * FL_N + wrapi(x + 1)] == (0 as u8) { k = k + 1 }
+            if f.solid[y * FL_N + wrapi(x - 1)] == (0 as u8) { k = k + 1 }
+            if f.solid[wrapi(y + 1) * FL_N + x] == (0 as u8) { k = k + 1 }
+            if f.solid[wrapi(y - 1) * FL_N + x] == (0 as u8) { k = k + 1 }
+            f.open[y * FL_N + x] = k as u8
+        }
+    }
+    # Cells with a wall within two cells take the exact wall-aware update.
+    for y in 0 to FL_N {
+        for x in 0 to FL_N {
+            let mut w: u8 = 0 as u8
+            for dy in 0 to 5 {
+                for dx in 0 to 5 {
+                    if f.solid[wrapi(y + dy - 2) * FL_N + wrapi(x + dx - 2)] != (0 as u8) { w = 1 as u8 }
+                }
+            }
+            f.near[y * FL_N + x] = w
         }
     }
 }
@@ -205,25 +235,30 @@ export function fluid_step(f: ptr<Fluid>, o: ptr<Ocean>) -> void {
     # L at an open cell is -1/4 times its number of open neighbours.
     let mut p: ptr<f32> = f.p
     let mut q: ptr<f32> = f.p2
+    let open: ptr<u8> = f.open
+    let near: ptr<u8> = f.near
+    # Serial on purpose: each sweep is too small for a parallel region to
+    # pay for itself (measured: 14 threads were slower than one).
     for it in 0 to FL_JACOBI {
-        parallel for y in 0 to FL_N {
+        for y in 0 to FL_N {
+            let yn2: i32 = wrapi(y - 2) * FL_N
+            let ys2: i32 = wrapi(y + 2) * FL_N
+            let row: i32 = y * FL_N
             for x in 0 to FL_N {
-                let c: i32 = y * FL_N + x
-                if solid[c] != (0 as u8) {
+                let c: i32 = row + x
+                if near[c] == (0 as u8) {
+                    # Open water: L p = (p(x+2) + p(x-2) + p(y+2) + p(y-2) - 4p) / 4
+                    q[c] = 0.25 * (p[row + wrapi(x + 2)] + p[row + wrapi(x - 2)] + p[yn2 + x] + p[ys2 + x]) - div[c]
+                } elif solid[c] != (0 as u8) {
                     q[c] = 0.0
                 } else {
-                    let mut open: i32 = 0
-                    if solid[y * FL_N + wrapi(x + 1)] == (0 as u8) { open = open + 1 }
-                    if solid[y * FL_N + wrapi(x - 1)] == (0 as u8) { open = open + 1 }
-                    if solid[wrapi(y + 1) * FL_N + x] == (0 as u8) { open = open + 1 }
-                    if solid[wrapi(y - 1) * FL_N + x] == (0 as u8) { open = open + 1 }
-                    if open == 0 {
+                    let k: i32 = open[c] as i32
+                    if k == 0 {
                         q[c] = p[c]
                     } else {
                         let lap: f32 = 0.5 * (fl_grad_x(p, solid, wrapi(x + 1), y) - fl_grad_x(p, solid, wrapi(x - 1), y))
                                      + 0.5 * (fl_grad_y(p, solid, x, wrapi(y + 1)) - fl_grad_y(p, solid, x, wrapi(y - 1)))
-                        let diag: f32 = -0.25 * (open as f32)
-                        q[c] = p[c] + (div[c] - lap) / diag
+                        q[c] = p[c] - 4.0 * (div[c] - lap) / (k as f32)
                     }
                 }
             }

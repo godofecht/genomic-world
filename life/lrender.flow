@@ -12,6 +12,7 @@ import .lconfig
 import .creature
 import .lworld
 import .census
+import .fluid
 
 extern {
     function cosf(x: f32) -> f32
@@ -29,7 +30,8 @@ struct LifeUi {
     paused: bool,
     zoom: bool,
     zx: i32,
-    zy: i32
+    zy: i32,
+    flow_view: bool
 }
 
 # Zoom lens: a ZOOM_CELLS x ZOOM_CELLS window of the world at 12 pixels per
@@ -71,7 +73,9 @@ function clampi(v: i32) -> i32 {
     return v
 }
 
-function draw_ground(cv: Canvas, env: ptr<World>) -> void {
+# Ground: nutrients in green, and the water's vorticity as a red (clockwise)
+# or blue (anticlockwise) tint. In flow view the vorticity alone, strongly.
+function draw_ground(cv: Canvas, env: ptr<World>, fl: ptr<Fluid>, flow_view: bool) -> void {
     let food: ptr<f32> = env.food
     let terrain: ptr<u8> = env.terrain
     let open: bool = env.passes_open
@@ -82,9 +86,24 @@ function draw_ground(cv: Canvas, env: ptr<World>) -> void {
             let c: i32 = y * WORLD_W + x
             let f: f32 = food[c]
             let t: u8 = terrain[c]
-            let mut r: i32 = 10 + ((22.0 * f) as i32)
+            let w: f32 = fluid_curl(fl, x >> 1, y >> 1)
+            let mut gain: f32 = 220.0
+            if flow_view { gain = 1400.0 }
+            let mut wr: i32 = (w * gain) as i32
+            let mut wb: i32 = (0.0 - w * gain) as i32
+            if wr < 0 { wr = 0 }
+            if wb < 0 { wb = 0 }
+            let mut r: i32 = 10 + ((22.0 * f) as i32) + wr
             let mut g: i32 = 14 + ((60.0 * f) as i32)
-            let mut b: i32 = 12 + ((20.0 * f) as i32)
+            let mut b: i32 = 14 + ((20.0 * f) as i32) + wb
+            if flow_view {
+                r = 12 + wr
+                g = 14 + ((wr + wb) / 4)
+                b = 18 + wb
+            }
+            if r > 255 { r = 255 }
+            if b > 255 { b = 255 }
+            if g > 255 { g = 255 }
             if t == TERRAIN_RIDGE {
                 r = 70
                 g = 64
@@ -197,6 +216,25 @@ function spark(cv: Canvas, cs: ptr<Census>, data: ptr<f32>, x0: i32, y0: i32, na
     }
 }
 
+# A sparkline around zero, for quantities that change sign.
+function spark_signed(cv: Canvas, cs: ptr<Census>, data: ptr<f32>, x0: i32, y0: i32, name: string,
+                      cur: f32, dec: i32, span: f32, r: i32, g: i32, b: i32) -> void {
+    let a: i32 = dim(cv, x0, y0, name)
+    let v: i32 = cv_fixed(cv, x0 + 330, y0, cur, dec, LI_R, LI_G, LI_B)
+    let top: i32 = y0 + 10
+    let h: i32 = 26
+    cv_rect(cv, x0, top, 384, h, 22, 22, 26)
+    cv_rect(cv, x0, top + h / 2, 384, 1, 70, 70, 76)
+    let n: i32 = cs.hist_count
+    for k in 0 to n {
+        let idx: i32 = (cs.hist_head - n + k + 256) % 256
+        let mut u: f32 = data[idx] / span
+        if u > 1.0 { u = 1.0 }
+        if u < -1.0 { u = -1.0 }
+        cv_rect(cv, x0 + (k * 384) / 256, top + h / 2 - ((u * ((h / 2 - 1) as f32)) as i32), 2, 2, r, g, b)
+    }
+}
+
 function draw_panel(cv: Canvas, l: ptr<Life>, cs: ptr<Census>, ui: LifeUi) -> void {
     let x0: i32 = L_PANEL_X
     cv_rect(cv, L_VIEW, 0, L_WIN_W - L_VIEW, L_WIN_H, 14, 14, 17)
@@ -260,23 +298,26 @@ function draw_panel(cv: Canvas, l: ptr<Life>, cs: ptr<Census>, ui: LifeUi) -> vo
     let c6: i32 = cv_text(cv, x0 + 198, lg, "STORE", 240, 210, 80)
     let c7: i32 = cv_text(cv, x0 + 240, lg, "SPIKE", 225, 70, 225)
 
-    y = 368
-    spark(cv, cs, cs.hist_pop, x0, y, "ORGANISMS", l.n as f32, 0, 30000.0, 220, 220, 220)
-    spark(cv, cs, cs.hist_pred, x0, y + 44, "PREDATOR SHARE", cs.predators, 3, 1.0, 225, 70, 225)
-    spark(cv, cs, cs.hist_cells, x0, y + 88, "MEAN BODY CELLS", cs.mean_cells, 2, 12.0, 70, 200, 230)
-    spark(cv, cs, cs.hist_species, x0, y + 132, "MORPHOSPECIES  PLANS HELD BY 10 OR MORE", cs.morphospecies as f32, 0, 40.0, 250, 196, 110)
+    y = 362
+    spark(cv, cs, cs.hist_pop, x0, y, "ORGANISMS", l.n as f32, 0, 20000.0, 220, 220, 220)
+    spark(cv, cs, cs.hist_pred, x0, y + 38, "PREDATOR SHARE", cs.predators, 3, 1.0, 225, 70, 225)
+    spark(cv, cs, cs.hist_cells, x0, y + 76, "MEAN BODY CELLS", cs.mean_cells, 2, 12.0, 70, 200, 230)
+    spark(cv, cs, cs.hist_species, x0, y + 114, "MORPHOSPECIES  PLANS HELD BY 10 OR MORE", cs.morphospecies as f32, 0, 40.0, 250, 196, 110)
+    spark(cv, cs, cs.hist_strength, x0, y + 152, "CURRENT STRENGTH  OCEAN REGIME", cs.strength, 2, 1.0, 110, 170, 250)
+    spark_signed(cv, cs, cs.hist_selv, x0, y + 190, "SELECTION ON SWIM SPEED  PARENTS MINUS ALL", cs.sel_v, 3, 0.15, 240, 140, 70)
 
-    y = 560
+    y = 610
     let k0: i32 = cv_text(cv, x0, y, "KEYS", LI_R, LI_G, LI_B)
     let k1: i32 = dim(cv, x0, y + 14, "P PAUSE    [ ] STEPS PER FRAME")
     let k2: i32 = dim(cv, x0, y + 26, "B OPEN OR CLOSE THE PASSES    W WARM OR COOL")
-    let k3: i32 = dim(cv, x0, y + 38, "Z ZOOM LENS, ARROWS PAN    R NEW WORLD    ESC QUIT")
-    let k4: i32 = dim(cv, x0, y + 62, "EACH BODY GROWS FROM ONE CELL BY GENE RULES:")
-    let k5: i32 = dim(cv, x0, y + 74, "FOR EACH CELL TYPE AND DIRECTION, GROW OR NOT,")
-    let k6: i32 = dim(cv, x0, y + 86, "AND WHICH CELL TYPE TO MAKE. MATING NEEDS A")
-    let k7: i32 = dim(cv, x0, y + 98, "SIMILAR DEVELOPMENTAL GENOTYPE.")
-    let k8: i32 = dim(cv, x0, y + 110, "STEPS")
-    let k9: i32 = cv_int(cv, x0 + 36, y + 110, ui.steps, LI_R, LI_G, LI_B)
+    let k3: i32 = dim(cv, x0, y + 38, "Z ZOOM  ARROWS PAN  F FLOW VIEW  R NEW  ESC QUIT")
+    let k4: i32 = dim(cv, x0, y + 56, "BODIES SWIM IN A 2D INCOMPRESSIBLE FLOW. RED AND")
+    let k5: i32 = dim(cv, x0, y + 68, "BLUE ARE VORTICITY; GREEN IS NUTRIENT CARRIED BY")
+    let k6: i32 = dim(cv, x0, y + 80, "THE WATER FROM DRIFTING UPWELLING ZONES.")
+    let k8: i32 = dim(cv, x0, y + 98, "STEPS")
+    let k9: i32 = cv_int(cv, x0 + 36, y + 98, ui.steps, LI_R, LI_G, LI_B)
+    let ka: i32 = dim(cv, x0 + 80, y + 98, "SEL ON WIDTH")
+    let kb: i32 = cv_fixed(cv, x0 + 158, y + 98, cs.sel_w, 3, LI_R, LI_G, LI_B)
 }
 
 function put_n(cv: Canvas, x: i32, y: i32, n: i32, r: i32, g: i32, b: i32) -> void {
@@ -348,7 +389,7 @@ export function life_render(cv: Canvas, l: ptr<Life>, cs: ptr<Census>, ui: LifeU
     if ui.zoom {
         draw_zoom(cv, l, ui)
     } else {
-        draw_ground(cv, &l.env)
+        draw_ground(cv, &l.env, &l.fluid, ui.flow_view)
         draw_bodies(cv, l)
     }
     draw_panel(cv, l, cs, ui)

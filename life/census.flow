@@ -23,6 +23,13 @@ struct Census {
     mean_speed: f32,
     mean_armor: f32,
     max_gen: i32,
+    mean_width: f32,
+    sel_v: f32,
+    sel_w: f32,
+    strength: f32,
+    hist_strength: ptr<f32>,
+    hist_selv: ptr<f32>,
+    hist_width: ptr<f32>,
     hist_pop: ptr<f32>,
     hist_pred: ptr<f32>,
     hist_cells: ptr<f32>,
@@ -42,6 +49,10 @@ export function census_new() -> Census {
         top_count: alloc_i32(BESTIARY as i64),
         plans: 0, morphospecies: 0, predators: 0.0, mean_cells: 0.0,
         mean_eyes: 0.0, mean_speed: 0.0, mean_armor: 0.0, max_gen: 0,
+        mean_width: 0.0, sel_v: 0.0, sel_w: 0.0, strength: 0.0,
+        hist_strength: alloc_f32(L_HIST as i64),
+        hist_selv: alloc_f32(L_HIST as i64),
+        hist_width: alloc_f32(L_HIST as i64),
         hist_pop: alloc_f32(L_HIST as i64),
         hist_pred: alloc_f32(L_HIST as i64),
         hist_cells: alloc_f32(L_HIST as i64),
@@ -59,6 +70,7 @@ export function census_take(cs: ptr<Census>, cr: ptr<Creature>, n: i32) -> void 
     let mut eyes: f64 = 0.0
     let mut speed: f64 = 0.0
     let mut armor: f64 = 0.0
+    let mut width: f64 = 0.0
     let mut gmax: i32 = 0
     cs.plans = 0
     for i in 0 to n {
@@ -67,6 +79,7 @@ export function census_take(cs: ptr<Census>, cr: ptr<Creature>, n: i32) -> void 
         eyes = eyes + (cr[i].eyes as f64)
         speed = speed + (cr[i].vmax as f64)
         armor = armor + (cr[i].defense as f64)
+        width = width + (cr[i].width as f64)
         if cr[i].gen > gmax { gmax = cr[i].gen }
         # Open addressing on the plan hash.
         let key: u32 = cr[i].plan | (1 as u32)
@@ -96,6 +109,7 @@ export function census_take(cs: ptr<Census>, cr: ptr<Creature>, n: i32) -> void 
         cs.mean_eyes = (eyes / fn) as f32
         cs.mean_speed = (speed / fn) as f32
         cs.mean_armor = (armor / fn) as f32
+        cs.mean_width = (width / fn) as f32
     }
     cs.max_gen = gmax
     cs.morphospecies = 0
@@ -119,8 +133,22 @@ export function census_take(cs: ptr<Census>, cr: ptr<Creature>, n: i32) -> void 
     }
 }
 
+# Selection differentials through reproduction since the last call: the
+# mean trait of parents (each birth counts both parents) minus the mean of
+# the living. Positive means selection currently favours larger values.
+export function census_selection(cs: ptr<Census>, par_v: f64, par_w: f64, par_n: f64, strength: f32) -> void {
+    cs.strength = strength
+    if par_n > 0.0 {
+        cs.sel_v = ((par_v / par_n) as f32) - cs.mean_speed
+        cs.sel_w = ((par_w / par_n) as f32) - cs.mean_width
+    }
+}
+
 export function census_record(cs: ptr<Census>, n: i32) -> void {
     let k: i32 = cs.hist_head
+    cs.hist_strength[k] = cs.strength
+    cs.hist_selv[k] = cs.sel_v
+    cs.hist_width[k] = cs.mean_width
     cs.hist_pop[k] = n as f32
     cs.hist_pred[k] = cs.predators
     cs.hist_cells[k] = cs.mean_cells
