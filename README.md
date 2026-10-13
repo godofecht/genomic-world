@@ -20,6 +20,8 @@ The GIF is produced by `./run.sh record` and is not committed.
 ./run.sh validate     validation against theory only
 ./run.sh export       run headless, write a VCF sample to out/
 ./run.sh equilibrium  calibrate, solve the attractors, compare cold and warm starts
+./run.sh life         the life world: bodies grown from genomes, in an ocean
+./run.sh life-bench   headless life world: body plans, predators, selection
 ```
 
 Requires Flow 2.0 (`flow` on the PATH) and a C11 compiler. With Homebrew
@@ -247,6 +249,57 @@ per run, about 180 generations):
   4000 ticks of cline formation. The slow ecological drift after that still
   has to be simulated.
 
+## Life world
+
+`./run.sh life` runs a second world on the same genetic engine, in which
+organisms have bodies and live in water.
+
+Development. A body grows from one core cell on a 7 x 7 lattice over four
+rounds. Each of 28 developmental genes says, for one cell type and one
+direction, whether to grow and which cell type to make. Growth is mirrored
+across the midline, so bodies are bilaterally symmetric. Seven cell types:
+core, mouth (grazing), motor (thrust), eye (sensing), armour (defence),
+store (energy capacity) and spike (attack). Everything about the organism
+follows from its body. Developmental genes follow a dominance series (the
+larger allele value is expressed), symmetric in the two homologs.
+
+Behaviour. A one-layer brain, 14 additive genetic weights, maps food ahead
+and to each side, the direction of the nearest prey and threat, and its own
+energy to turning and thrust. Eyes on the midline see ahead; paired eyes
+off it see to the sides.
+
+Water. A 2D incompressible flow (Stam's stable fluids, 128 x 128, periodic)
+is driven by gyres. The ridges are walls; the flow goes around them and
+through the passes. The pressure Laplacian is the exact composition of the
+divergence and gradient used, wall rules included, so the projection removes
+97 percent or more of the divergence next to walls as well as in open water
+(`tests/test_fluid.flow`, which also checks the linear steady state to 0.01
+percent). Organisms drift with the flow and swim relative to it. Top speed is
+motor thrust over drag, and drag grows with body width, so shape matters.
+Food is carried by the water from upwelling patches.
+
+A shifting fitness landscape. The Ocean evolution model (`life/ocean.flow`)
+cycles current strength with a 6000-tick period and drifts the gyres and
+the upwelling patches. Each census window measures the selection
+differential on swim speed and on body width: the mean of parents minus the
+mean of the living. In the first 29,000 ticks of a default run, selection on
+width rises with the currents (to +0.03) and falls back as they weaken.
+After predators invade, selection on width turns negative (to -0.085).
+
+Ecology. Predators need a spike and a mouth and strike within the 3 x 3
+neighbourhood. Spikes cut grazing efficiency, so predators depend on prey.
+Mating needs developmental genotypes within 10 bits of each other, so body
+plans that drift apart stop interbreeding.
+
+A default run (seed 20261014, 40,000 ticks, about 580 generations, 46 s)
+shows long stasis: a three-cell grazer dominates for about 29,000 ticks.
+Then predators invade, body plans go from about 25 to 82, mean body size
+from 3.0 to 4.9 cells, and predators settle at 10 to 20 percent alongside
+armoured prey. In the version without water, eyes evolved within 200
+generations under predation; in the ocean they had not by 580.
+
+Both worlds give the same state hash on 1 and 8 threads (`run.sh test`).
+
 ## Known gaps
 
 These are limits of the model as it stands.
@@ -321,6 +374,8 @@ bench.flow             headless benchmark
 validate.flow          genetic engine against theory
 export_run.flow        headless run and VCF export
 equilibrium.flow       attractors against cold and warm starts
+life_world.flow        the life world app
+life_bench.flow        headless life world
 sim/config.flow        sizes and default constants
 sim/params.flow        GW_ environment overrides
 sim/state.flow         World and Agents records
@@ -339,6 +394,15 @@ sim/reproduction.flow  mate choice and offspring
 sim/step.flow          the tick, phase by phase
 sim/stats.flow         allele frequencies, F_ST, heritability, dispersal
 sim/sampling.flow      VCF and TSV export
+life/lgenome.flow      256-locus genome, dominance series, meiosis
+life/develop.flow      body growth from the developmental genes
+life/creature.flow     the organism record and its phenotype
+life/brain.flow        the one-layer genetic brain
+life/fluid.flow        stable fluids with walls
+life/ocean.flow        the Ocean evolution model: currents and upwelling
+life/lworld.flow       the life world's tick
+life/census.flow       body plans, bestiary, selection differentials
+life/lrender.flow      drawing bodies, flow and the panel
 sim/textbuf.flow       text output buffer
 sim/canvas.flow        framebuffer, text and numbers
 sim/render.flow        views and the genetics panel
