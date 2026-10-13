@@ -6,6 +6,7 @@
 
 import .config
 import .climate
+import .genome
 
 # The agent columns, as a unit. World holds the live set inline and a second
 # set in `back`; compaction scatters survivors into back, then swaps.
@@ -24,7 +25,12 @@ struct Agents {
     sense: ptr<i32>,
     load: ptr<i32>,
     col: ptr<u32>,
-    genome: ptr<u32>
+    genome: ptr<u32>,
+    gtopt: ptr<f32>,
+    mid: ptr<f32>,
+    bx: ptr<f32>,
+    by: ptr<f32>,
+    viab: ptr<f32>
 }
 
 struct World {
@@ -35,11 +41,8 @@ struct World {
     passes_open: bool,
     warming_dir: i32,
 
-    # genetics
-    mu: f32,
-    xover: f32,
-    lambda: f32,
-    p0: f32,
+    # genetics and selection
+    arch: Arch,
     thermal_cost: f32,
 
     # field, WORLD_CELLS each
@@ -65,6 +68,11 @@ struct World {
     load: ptr<i32>,
     col: ptr<u32>,
     genome: ptr<u32>,
+    gtopt: ptr<f32>,
+    mid: ptr<f32>,
+    bx: ptr<f32>,
+    by: ptr<f32>,
+    viab: ptr<f32>,
     back: Agents,
     slot_dst: ptr<i32>,
 
@@ -79,6 +87,12 @@ struct World {
     stillborn: i32,
     starved: i32,
     old_age: i32,
+    killed: i32,
     pending: i32,
-    next_seed: u32
+    next_seed: u32,
+
+    # running estimates, exponential moving averages over births
+    gen_time: f32,
+    disp2: f32,
+    land_cells: i32
 }

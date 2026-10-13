@@ -32,7 +32,8 @@ struct Ui {
     view: i32,
     steps: i32,
     paused: bool,
-    mu_level: i32
+    mu_level: i32,
+    exported: i32
 }
 
 export function view_name(v: i32) -> string {
@@ -329,7 +330,7 @@ function draw_panel(cv: Canvas, w: ptr<World>, s: ptr<Stats>, ui: Ui) -> void {
     let h6: i32 = cv_int(cv, x0 + 258, y, w.starved, INK_R, INK_G, INK_B)
     y = y + 12
     let m1: i32 = label(cv, x0, y, "MU")
-    let m2: i32 = cv_fixed(cv, x0 + 18, y, w.mu * 10000.0, 1, INK_R, INK_G, INK_B)
+    let m2: i32 = cv_fixed(cv, x0 + 18, y, w.arch.mu * 10000.0, 1, INK_R, INK_G, INK_B)
     let m3: i32 = label(cv, m2 + 4, y, "E-4")
     let m4: i32 = label(cv, x0 + 96, y, "WARMING")
     let m5: i32 = cv_fixed(cv, x0 + 144, y, w.climate.warming as f32, 3, INK_R, INK_G, INK_B)
@@ -358,8 +359,14 @@ function draw_panel(cv: Canvas, w: ptr<World>, s: ptr<Stats>, ui: Ui) -> void {
     stat_line(cv, x0 + 196, y + 12, "SIZE", s.mean_size, 3)
     stat_line(cv, x0 + 196, y + 24, "REPRO", s.mean_repro, 3)
     stat_line(cv, x0 + 196, y + 36, "MISMATCH", s.mismatch, 3)
+    stat_line(cv, x0, y + 48, "H2 P-O", s.h2_po, 3)
+    stat_line(cv, x0, y + 60, "H2 VG/VP", s.h2_v, 3)
+    stat_line(cv, x0 + 196, y + 48, "GEN TICKS", s.gen_time, 1)
+    stat_line(cv, x0 + 196, y + 60, "SIGMA", s.sigma, 2)
+    stat_line(cv, x0, y + 72, "LOAD 1-W", s.load, 4)
+    stat_line(cv, x0 + 196, y + 72, "NB 4PIDS2", s.nb, 1)
 
-    y = 340
+    y = 372
     sparkline(cv, s, s.hist_pop, x0, y, "POPULATION", w.n as f32, 0,
               0.0, N_MAX as f32 * 0.6, 220, 220, 220)
     sparkline(cv, s, s.hist_fst, x0, y + 50, "F_ST INNER VS OUTER  30 MARKER LOCI", s.fst, 4,
@@ -369,18 +376,19 @@ function draw_panel(cv: Canvas, w: ptr<World>, s: ptr<Stats>, ui: Ui) -> void {
     sparkline(cv, s, s.hist_r, x0, y + 150, "ADAPTATION  CORR(T_OPT, LOCAL T)", s.adapt_r, 3,
               -0.2, 1.0, 240, 130, 70)
     sparkline(cv, s, s.hist_burden, x0, y + 200, "DELETERIOUS ALLELES PER GENOME", s.mean_burden, 3,
-              0.0, 2.0, 220, 80, 80)
+              0.0, 4.0, 220, 80, 80)
 
-    y = 600
+    y = 626
     let k0: i32 = cv_text(cv, x0, y, "KEYS", INK_R, INK_G, INK_B)
     let k1: i32 = label(cv, x0, y + 14, "1-4 VIEW    P PAUSE    [ ] STEPS PER FRAME")
     let k2: i32 = label(cv, x0, y + 26, "B OPEN OR CLOSE THE MOUNTAIN PASSES")
     let k3: i32 = label(cv, x0, y + 38, "W WARM OR COOL THE CLIMATE")
     let k4: i32 = label(cv, x0, y + 50, "M MUTATION RATE    X BOTTLENECK 90 PERCENT")
-    let k5: i32 = label(cv, x0, y + 62, "R NEW WORLD    ESC QUIT")
-    let k6: i32 = label(cv, x0, y + 90, "WRITTEN IN FLOW. CLIMATE IS A FLOW MODEL.")
-    let k7: i32 = label(cv, x0, y + 102, "GENOMES ARE BIT-PACKED; MEIOSIS IS")
-    let k8: i32 = label(cv, x0, y + 114, "MASK, SHIFT AND XOR ON 32-BIT WORDS.")
+    let k5: i32 = label(cv, x0, y + 62, "E EXPORT VCF    R NEW WORLD    ESC QUIT")
+    if ui.exported > 0 {
+        let k6: i32 = cv_text(cv, x0, y + 80, "EXPORTED OUT/SAMPLE.VCF AT TICK", 140, 220, 140)
+        let k7: i32 = cv_int(cv, x0 + 192, y + 80, ui.exported, 140, 220, 140)
+    }
 }
 
 export function render_frame(cv: Canvas, w: ptr<World>, s: ptr<Stats>, ui: Ui) -> void {

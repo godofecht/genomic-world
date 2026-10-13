@@ -25,7 +25,7 @@ function main() -> i32 {
     let mut s: Stats = stats_alloc()
     let mut phase_ns: array<i64, 8> = [0, 0, 0, 0, 0, 0, 0, 0]
     printf("threads %d\n", omp_get_max_threads())
-    printf(" tick    pop  births  starved  adapt_r    F_ST  H_mark  burden  ms/tick\n")
+    printf(" tick    pop  births  adapt_r    F_ST  H_mark  burden   load  h2_po  h2_v  gen  sigma     Nb  ms/tick\n")
     let mut agent_ticks: f64 = 0.0
     let t_start: i64 = xp_now_ns()
     let mut t_last: i64 = t_start
@@ -41,9 +41,11 @@ function main() -> i32 {
             let ms: f64 = ((now - t_last) as f64) / 1000000.0 / (REPORT_EVERY as f64)
             stats_compute(&s, &w)
             t_last = xp_now_ns()
-            printf("%5d %6d %7d %8d %8.3f %7.4f %7.4f %7.3f %8.3f\n",
-                   t + 1, w.n, w.births, w.starved, s.adapt_r as f64,
-                   s.fst as f64, s.het as f64, s.mean_burden as f64, ms)
+            printf("%5d %6d %7d %8.3f %7.4f %7.4f %7.3f %6.4f %6.3f %5.3f %4.0f %6.2f %6.0f %8.3f\n",
+                   t + 1, w.n, w.births, s.adapt_r as f64,
+                   s.fst as f64, s.het as f64, s.mean_burden as f64, s.load as f64,
+                   s.h2_po as f64, s.h2_v as f64, s.gen_time as f64, s.sigma as f64,
+                   s.nb as f64, ms)
         }
         if w.n == 0 {
             printf("extinct at tick %d\n", t)
@@ -66,7 +68,7 @@ function main() -> i32 {
     # Frame cost: stats plus a full render into the framebuffer, per view.
     let cv: Canvas = canvas_new(WIN_W, WIN_H)
     for v in 0 to 4 {
-        let ui: Ui = Ui { view: v, steps: 1, paused: false, mu_level: 1 }
+        let ui: Ui = Ui { view: v, steps: 1, paused: false, mu_level: 1, exported: 0 }
         let a: i64 = xp_now_ns()
         for f in 0 to 50 {
             stats_compute(&s, &w)

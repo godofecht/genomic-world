@@ -1,0 +1,92 @@
+# A growable byte buffer for writing text files without format strings.
+
+import "stdlib/memory.flow"
+import "stdlib/io.flow"
+
+extern {
+    function realloc(p: ptr<void>, size: i64) -> ptr<void>
+}
+
+struct TextBuf {
+    data: ptr<u8>,
+    len: i64,
+    cap: i64
+}
+
+export function tb_new(cap: i64) -> TextBuf {
+    return TextBuf { data: alloc_bytes(cap) as ptr<u8>, len: 0, cap: cap }
+}
+
+function tb_reserve(t: ptr<TextBuf>, extra: i64) -> void {
+    if t.len + extra <= t.cap { return }
+    let mut c: i64 = t.cap * 2
+    while c < t.len + extra { c = c * 2 }
+    t.data = realloc(t.data as ptr<void>, c) as ptr<u8>
+    t.cap = c
+}
+
+export function tb_char(t: ptr<TextBuf>, ch: i32) -> void {
+    tb_reserve(t, 1)
+    t.data[t.len] = ch as u8
+    t.len = t.len + 1
+}
+
+export function tb_str(t: ptr<TextBuf>, s: string) -> void {
+    let b: ptr<u8> = s as ptr<u8>
+    let mut i: i32 = 0
+    while b[i] != 0 {
+        tb_char(t, b[i] as i32)
+        i = i + 1
+    }
+}
+
+export function tb_u64(t: ptr<TextBuf>, v: i64) -> void {
+    let mut div: i64 = 1
+    while div <= v / 10 { div = div * 10 }
+    while div > 0 {
+        tb_char(t, 48 + ((v / div) % 10) as i32)
+        div = div / 10
+    }
+}
+
+export function tb_int(t: ptr<TextBuf>, v: i64) -> void {
+    if v < 0 {
+        tb_char(t, 45)
+        tb_u64(t, 0 - v)
+    } else {
+        tb_u64(t, v)
+    }
+}
+
+# Fixed-point decimal with `decimals` places.
+export function tb_fixed(t: ptr<TextBuf>, value: f64, decimals: i32) -> void {
+    let mut scale: i64 = 1
+    for k in 0 to decimals { scale = scale * 10 }
+    let mut v: f64 = value
+    if v < 0.0 {
+        tb_char(t, 45)
+        v = 0.0 - v
+    }
+    let q: i64 = (v * (scale as f64) + 0.5) as i64
+    tb_u64(t, q / scale)
+    if decimals > 0 {
+        tb_char(t, 46)
+        let frac: i64 = q % scale
+        let mut div: i64 = scale / 10
+        while div > 0 {
+            tb_char(t, 48 + ((frac / div) % 10) as i32)
+            div = div / 10
+        }
+    }
+}
+
+export function tb_tab(t: ptr<TextBuf>) -> void { tb_char(t, 9) }
+export function tb_nl(t: ptr<TextBuf>) -> void { tb_char(t, 10) }
+
+export function tb_save(t: ptr<TextBuf>, path: string) -> bool {
+    return io_write_bytes(path, t.data, t.len)
+}
+
+export function tb_clear(t: ptr<TextBuf>) -> void {
+    t.len = 0
+}

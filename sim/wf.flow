@@ -1,0 +1,136 @@
+# A Wright-Fisher population built on the simulator's own genetics.
+#
+# Same genomes, meiosis, mutation and viability code as the spatial model,
+# with the ecology removed: N diploid hermaphrodites, non-overlapping
+# generations, both parents drawn with replacement in proportion to fitness
+# (so selfing happens at rate 1/N, as in the textbook model). Classical
+# population genetics gives exact or first-order predictions here, which is
+# what validate.flow checks.
+
+import "stdlib/memory.flow"
+import .config
+import .rng
+import .bits
+import .genome
+
+const WF_NEUTRAL: i32 = 0
+const WF_VIABILITY: i32 = 1
+const WF_GENIC: i32 = 2
+
+struct Wf {
+    n: i32,
+    g: ptr<u32>,
+    next: ptr<u32>,
+    cum: ptr<f32>
+}
+
+export function wf_new(n: i32) -> Wf {
+    let words: i64 = (n as i64) * (GENOME_WORDS as i64)
+    return Wf {
+        n: n,
+        g: alloc_zeroed(words * 4) as ptr<u32>,
+        next: alloc_zeroed(words * 4) as ptr<u32>,
+        cum: alloc_f32(n as i64)
+    }
+}
+
+export function wf_clear(p: ptr<Wf>) -> void {
+    for k in 0 to p.n * GENOME_WORDS {
+        p.g[k] = 0 as u32
+    }
+}
+
+# Every homolog at every locus is allele 1 with probability q.
+export function wf_random(p: ptr<Wf>, q: f32, st: ptr<u32>) -> void {
+    for k in 0 to p.n * GENOME_WORDS {
+        let mut v: u32 = 0 as u32
+        for b in 0 to 32 {
+            if rng_unit(st) < q {
+                v = v | ((1 as u32) << (b as u32))
+            }
+        }
+        p.g[k] = v
+    }
+}
+
+function fitness(p: ptr<Wf>, i: i32, a: ptr<Arch>, mode: i32, s: f32) -> f32 {
+    if mode == WF_VIABILITY {
+        return gen_viability(p.g, i * GENOME_WORDS, a)
+    }
+    if mode == WF_GENIC {
+        let d: i32 = allele_dosage(p.g, i * GENOME_WORDS, 0)
+        if d == 1 { return 1.0 + s }
+        if d == 2 { return (1.0 + s) * (1.0 + s) }
+    }
+    return 1.0
+}
+
+# First index whose cumulative fitness exceeds x.
+function pick(p: ptr<Wf>, x: f32) -> i32 {
+    let mut lo: i32 = 0
+    let mut hi: i32 = p.n - 1
+    while lo < hi {
+        let m: i32 = (lo + hi) / 2
+        if p.cum[m] > x { hi = m } else { lo = m + 1 }
+    }
+    return lo
+}
+
+export function wf_generation(p: ptr<Wf>, a: ptr<Arch>, st: ptr<u32>, mode: i32, s: f32) -> void {
+    let mut acc: f32 = 0.0
+    for i in 0 to p.n {
+        acc = acc + fitness(p, i, a, mode, s)
+        p.cum[i] = acc
+    }
+    for c in 0 to p.n {
+        let mom: i32 = pick(p, rng_unit(st) * acc)
+        let dad: i32 = pick(p, rng_unit(st) * acc)
+        gen_cross(p.g, mom * GENOME_WORDS, p.g, dad * GENOME_WORDS,
+                  p.next, c * GENOME_WORDS, st, a)
+    }
+    let t: ptr<u32> = p.g
+    p.g = p.next
+    p.next = t
+}
+
+# Frequency of allele 1 at locus l.
+export function wf_freq(p: ptr<Wf>, l: i32) -> f32 {
+    let mut c: i32 = 0
+    for i in 0 to p.n {
+        c = c + allele_dosage(p.g, i * GENOME_WORDS, l)
+    }
+    return (c as f32) / (2.0 * (p.n as f32))
+}
+
+# Mean expected heterozygosity 2pq over loci [first, last).
+export function wf_het(p: ptr<Wf>, first: i32, last: i32) -> f32 {
+    let mut h: f32 = 0.0
+    for l in first to last {
+        let q: f32 = wf_freq(p, l)
+        h = h + 2.0 * q * (1.0 - q)
+    }
+    return h / ((last - first) as f32)
+}
+
+# Gametic linkage disequilibrium D between loci la and lb on the same
+# chromosome, over all 2N phased haplotypes.
+export function wf_ld(p: ptr<Wf>, la: i32, lb: i32) -> f32 {
+    let w: i32 = la >> 5
+    let ba: i32 = la & 31
+    let bb: i32 = lb & 31
+    let mut na: i32 = 0
+    let mut nb: i32 = 0
+    let mut nab: i32 = 0
+    for i in 0 to p.n {
+        for h in 0 to 2 {
+            let v: u32 = p.g[i * GENOME_WORDS + w + h * CHROMS]
+            let x: i32 = bit_at(v, ba)
+            let y: i32 = bit_at(v, bb)
+            na = na + x
+            nb = nb + y
+            nab = nab + x * y
+        }
+    }
+    let m: f32 = 2.0 * (p.n as f32)
+    return (nab as f32) / m - ((na as f32) / m) * ((nb as f32) / m)
+}

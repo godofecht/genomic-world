@@ -15,6 +15,7 @@ import .world
 import .population
 import .behaviour
 import .reproduction
+import .genome
 
 export function sim_init(seed: u32) -> World {
     let mut w: World = world_alloc(seed)
@@ -31,6 +32,7 @@ export function sim_reseed(w: ptr<World>, seed: u32) -> void {
     w.next_seed = seed
     w.tick = 0 as u32
     w.climate = Climate_new()
+    arch_draw(&w.arch, seed)
     world_build_terrain(w)
     world_update_temperature(w)
     pop_found(w)
@@ -56,6 +58,7 @@ export function sim_phase(w: ptr<World>, k: i32) -> void {
         w.stillborn = 0
         w.starved = 0
         w.old_age = 0
+        w.killed = 0
         world_climate_step(w)
         world_update_temperature(w)
     } elif k == 1 {

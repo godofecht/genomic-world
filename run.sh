@@ -6,6 +6,8 @@
 #   ./run.sh bench      headless throughput and population genetics
 #   ./run.sh test       every self-checking test, plus a thread-count
 #                       determinism check
+#   ./run.sh validate   genetic engine against population-genetic theory
+#   ./run.sh export     run 3000 ticks, write a VCF sample to out/
 #
 # OpenMP: Apple clang only links it when libomp's headers and library are on
 # the search paths. Without libomp the parallel loops compile serial and the
@@ -54,10 +56,23 @@ case "${1:-gfx}" in
             echo "FAIL: state differs between thread counts"
             fail=1
         fi
+        echo "== validation against theory"
+        mkdir -p out
+        if ! flow run validate.flow 2>&1 | quiet; then
+            fail=1
+        fi
         exit $fail
         ;;
+    validate)
+        mkdir -p out
+        flow run validate.flow 2>&1 | quiet
+        ;;
+    export)
+        mkdir -p out
+        flow run export_run.flow 2>&1 | quiet
+        ;;
     *)
-        echo "usage: $0 [gfx|record N [stride]|bench|test]" >&2
+        echo "usage: $0 [gfx|record N [stride]|bench|test|validate|export]" >&2
         exit 2
         ;;
 esac

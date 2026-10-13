@@ -1,0 +1,182 @@
+# Export a random sample of the population for analysis in other tools.
+#
+#   out/sample.vcf   VCF 4.2, phased diploid genotypes at all 128 loci.
+#                    Chromosomes chr1-chr4, one position per locus. REF is
+#                    allele 0, ALT allele 1. INFO carries the locus class,
+#                    its additive effect or selection coefficient, and the
+#                    ALT frequency in the whole population.
+#   out/sample.tsv   one row per sampled individual: position, region,
+#                    local temperature, phenotypes and genotypic values.
+#   out/loci.tsv     the genetic architecture, one row per locus.
+
+import .config
+import .state
+import .rng
+import .genome
+import .world
+import .stats
+import .bits
+import .textbuf
+import "stdlib/memory.flow"
+
+export function class_name(c: i32) -> string {
+    if c == 0 { return "topt" }
+    if c == 1 { return "speed" }
+    if c == 2 { return "sense" }
+    if c == 3 { return "size" }
+    if c == 4 { return "repro" }
+    if c == 5 { return "deleterious" }
+    return "marker"
+}
+
+function sample_id(t: ptr<TextBuf>, w: ptr<World>, i: i32) -> void {
+    tb_str(t, "i")
+    tb_u64(t, w.seed_of[i] as i64)
+}
+
+# Draw k distinct slots without replacement (partial Fisher-Yates).
+function draw_sample(w: ptr<World>, k: i32, st: ptr<u32>) -> ptr<i32> {
+    let idx: ptr<i32> = alloc_i32(w.n as i64)
+    for i in 0 to w.n { idx[i] = i }
+    for j in 0 to k {
+        let r: i32 = j + rng_below(st, w.n - j)
+        let tmp: i32 = idx[j]
+        idx[j] = idx[r]
+        idx[r] = tmp
+    }
+    return idx
+}
+
+export function export_sample(w: ptr<World>, s: ptr<Stats>, want: i32) -> i32 {
+    let mut k: i32 = want
+    if k > w.n { k = w.n }
+    if k <= 0 { return 0 }
+    let mut st: u32 = rng_stream(w.seed, w.tick, 555 as u32)
+    let idx: ptr<i32> = draw_sample(w, k, &st)
+    let a: ptr<Arch> = &w.arch
+    let mut t: TextBuf = tb_new(1 << 20)
+
+    tb_str(&t, "##fileformat=VCFv4.2\n##source=GenomicWorld\n")
+    tb_str(&t, "##genomicworld_tick=")
+    tb_u64(&t, w.tick as i64)
+    tb_str(&t, "\n##genomicworld_seed=")
+    tb_u64(&t, w.seed as i64)
+    tb_str(&t, "\n##genomicworld_population=")
+    tb_u64(&t, w.n as i64)
+    tb_nl(&t)
+    for c in 0 to CHROMS {
+        tb_str(&t, "##contig=<ID=chr")
+        tb_u64(&t, (c + 1) as i64)
+        tb_str(&t, ",length=32>\n")
+    }
+    tb_str(&t, "##INFO=<ID=CLASS,Number=1,Type=String,Description=\"Locus class\">\n")
+    tb_str(&t, "##INFO=<ID=EFFECT,Number=1,Type=Float,Description=\"Additive effect of ALT on the trait genotypic value, 0-1 scale\">\n")
+    tb_str(&t, "##INFO=<ID=S,Number=1,Type=Float,Description=\"Viability cost of ALT homozygote; heterozygote cost is h*S\">\n")
+    tb_str(&t, "##INFO=<ID=AF,Number=1,Type=Float,Description=\"ALT frequency in the whole population\">\n")
+    tb_str(&t, "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Phased genotype, maternal|paternal\">\n")
+    tb_str(&t, "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT")
+    for j in 0 to k {
+        tb_tab(&t)
+        sample_id(&t, w, idx[j])
+    }
+    tb_nl(&t)
+    for l in 0 to LOCI {
+        let c: i32 = l >> 5
+        let b: i32 = l & 31
+        let cls: i32 = locus_class(l)
+        tb_str(&t, "chr")
+        tb_u64(&t, (c + 1) as i64)
+        tb_tab(&t)
+        tb_u64(&t, (b + 1) as i64)
+        tb_tab(&t)
+        tb_str(&t, class_name(cls))
+        tb_char(&t, 95)
+        tb_u64(&t, l as i64)
+        tb_str(&t, "\tA\tT\t.\tPASS\tCLASS=")
+        tb_str(&t, class_name(cls))
+        if cls < 5 {
+            tb_str(&t, ";EFFECT=")
+            tb_fixed(&t, a.additive[l] as f64, 5)
+        }
+        if cls == 5 {
+            tb_str(&t, ";S=")
+            tb_fixed(&t, a.sel[l] as f64, 5)
+        }
+        tb_str(&t, ";AF=")
+        tb_fixed(&t, s.freq[l] as f64, 5)
+        tb_str(&t, "\tGT")
+        for j in 0 to k {
+            let base: i32 = idx[j] * GENOME_WORDS
+            tb_tab(&t)
+            tb_char(&t, 48 + bit_at(w.genome[base + c], b))
+            tb_char(&t, 124)
+            tb_char(&t, 48 + bit_at(w.genome[base + c + CHROMS], b))
+        }
+        tb_nl(&t)
+    }
+    let ok1: bool = tb_save(&t, "out/sample.vcf")
+
+    tb_clear(&t)
+    tb_str(&t, "id\tx\ty\tregion\ttemperature\ttopt\ttopt_genotypic\tspeed\tsense\tsize\trepro_threshold\tviability\tburden\tage\tenergy\n")
+    for j in 0 to k {
+        let i: i32 = idx[j]
+        let row: i32 = (w.py[i] as i32) & (WORLD_H - 1)
+        sample_id(&t, w, i)
+        tb_tab(&t)
+        tb_fixed(&t, w.px[i] as f64, 3)
+        tb_tab(&t)
+        tb_fixed(&t, w.py[i] as f64, 3)
+        tb_tab(&t)
+        tb_u64(&t, region_at(w, w.px[i], w.py[i]) as i64)
+        tb_tab(&t)
+        tb_fixed(&t, w.temp_row[row] as f64, 4)
+        tb_tab(&t)
+        tb_fixed(&t, w.topt[i] as f64, 4)
+        tb_tab(&t)
+        tb_fixed(&t, w.gtopt[i] as f64, 4)
+        tb_tab(&t)
+        tb_fixed(&t, w.spd[i] as f64, 4)
+        tb_tab(&t)
+        tb_u64(&t, w.sense[i] as i64)
+        tb_tab(&t)
+        tb_fixed(&t, w.size[i] as f64, 4)
+        tb_tab(&t)
+        tb_fixed(&t, w.thr[i] as f64, 4)
+        tb_tab(&t)
+        tb_fixed(&t, w.viab[i] as f64, 4)
+        tb_tab(&t)
+        tb_u64(&t, gen_burden(w.genome, i * GENOME_WORDS) as i64)
+        tb_tab(&t)
+        tb_u64(&t, w.age[i] as i64)
+        tb_tab(&t)
+        tb_fixed(&t, w.en[i] as f64, 4)
+        tb_nl(&t)
+    }
+    let ok2: bool = tb_save(&t, "out/sample.tsv")
+
+    tb_clear(&t)
+    tb_str(&t, "locus\tchrom\tpos\tclass\teffect\ts\th\tmap_morgans_from_pos1\tfreq\n")
+    for l in 0 to LOCI {
+        tb_u64(&t, l as i64)
+        tb_str(&t, "\tchr")
+        tb_u64(&t, ((l >> 5) + 1) as i64)
+        tb_tab(&t)
+        tb_u64(&t, ((l & 31) + 1) as i64)
+        tb_tab(&t)
+        tb_str(&t, class_name(locus_class(l)))
+        tb_tab(&t)
+        tb_fixed(&t, a.additive[l] as f64, 5)
+        tb_tab(&t)
+        tb_fixed(&t, a.sel[l] as f64, 5)
+        tb_tab(&t)
+        tb_fixed(&t, a.dom as f64, 3)
+        tb_tab(&t)
+        tb_fixed(&t, (a.map_len as f64) * ((l & 31) as f64) / 31.0, 4)
+        tb_tab(&t)
+        tb_fixed(&t, s.freq[l] as f64, 5)
+        tb_nl(&t)
+    }
+    let ok3: bool = tb_save(&t, "out/loci.tsv")
+    if ok1 and ok2 and ok3 { return k }
+    return 0
+}

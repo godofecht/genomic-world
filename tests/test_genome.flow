@@ -1,5 +1,6 @@
-# Genetic operators: bit counting, Mendelian segregation, recombination,
-# linkage, mutation, and the genotype to phenotype map.
+# Genetic operators: bit counting, Mendelian segregation, Haldane
+# recombination, mutation and its bias, the effect-size architecture,
+# dominance and viability.
 #
 # Each check returns its own exit code. Statistical checks use 20000 draws
 # and tolerances of roughly four standard errors.
@@ -25,21 +26,18 @@ function absf(x: f32) -> f32 {
     return x
 }
 
-function mutation_p0(lambda: f32) -> f32 {
-    # exp(-lambda) by series, enough terms for lambda <= 1
-    let mut term: f32 = 1.0
-    let mut sum: f32 = 1.0
-    for k in 1 to 20 {
-        term = term * (0.0 - lambda) / (k as f32)
-        sum = sum + term
+function fill(p: ptr<u32>, v: u32) -> void {
+    for c in 0 to 8 {
+        p[c] = v
     }
-    return sum
 }
 
 function main() -> i32 {
     let mut st: u32 = rng_stream(12345 as u32, 1 as u32, 2 as u32)
     let parent: ptr<u32> = alloc_zeroed(64) as ptr<u32>
     let out: ptr<u32> = alloc_zeroed(64) as ptr<u32>
+    let mut a: Arch = arch_new(2026 as u32)
+    arch_set_mu(&a, 0.0)
 
     # 1. popcount agrees with a bit-by-bit count.
     for k in 0 to DRAWS {
@@ -59,12 +57,13 @@ function main() -> i32 {
     }
 
     # 3. Without mutation, every gamete locus carries one of the parent's
-    #    two alleles at that locus.
+    #    two alleles at that locus, at any crossover count.
+    arch_set_map(&a, 3.0)
     for k in 0 to DRAWS {
         for c in 0 to 8 {
             parent[c] = rng_word(&st)
         }
-        gen_gamete(parent, 0, out, 0, &st, 0.5, 0.0, 1.0)
+        gen_gamete(parent, 0, out, 0, &st, &a)
         for c in 0 to CHROMS {
             let bad: u32 = (out[c] ^ parent[c]) & (out[c] ^ parent[c + CHROMS])
             if bad != (0 as u32) {
@@ -74,12 +73,13 @@ function main() -> i32 {
         }
     }
 
-    # 4. With no crossover a gamete chromosome is one parental homolog whole.
+    # 4. With a zero-length map a gamete chromosome is one homolog whole.
+    arch_set_map(&a, 0.0)
     for k in 0 to DRAWS {
         for c in 0 to 8 {
             parent[c] = rng_word(&st)
         }
-        gen_gamete(parent, 0, out, 0, &st, 0.0, 0.0, 1.0)
+        gen_gamete(parent, 0, out, 0, &st, &a)
         for c in 0 to CHROMS {
             if out[c] != parent[c] and out[c] != parent[c + CHROMS] {
                 printf("FAIL 4 recombinant without crossover, chrom %d\n", c)
@@ -88,75 +88,70 @@ function main() -> i32 {
         }
     }
 
-    # Parent heterozygous everywhere: homolog A all 0, homolog B all 1.
+    # Parent heterozygous everywhere: one homolog all 0, the other all 1.
     for c in 0 to CHROMS {
         parent[c] = 0 as u32
         parent[c + CHROMS] = 0xFFFFFFFF as u32
     }
 
-    # 5. Recombinant fraction equals the crossover probability.
+    # 5. Recombination fractions follow Haldane's map function for loci 1,
+    #    8 and 31 gaps apart, at a 1 Morgan map.
     # 6. Segregation: each locus transmits allele 1 half the time.
-    # 9. Linkage: adjacent loci rarely separate, distant loci often do.
-    let mut recomb: i32 = 0
+    arch_set_map(&a, 1.0)
     let mut ones0: i32 = 0
     let mut ones31: i32 = 0
-    let mut split_near: i32 = 0
-    let mut split_far: i32 = 0
+    let mut r1: i32 = 0
+    let mut r8: i32 = 0
+    let mut r31: i32 = 0
     for k in 0 to DRAWS {
-        gen_gamete(parent, 0, out, 0, &st, 0.5, 0.0, 1.0)
+        gen_gamete(parent, 0, out, 0, &st, &a)
         let v: u32 = out[0]
-        if v != (0 as u32) and v != (0xFFFFFFFF as u32) {
-            recomb = recomb + 1
-        }
         ones0 = ones0 + bit_at(v, 0)
         ones31 = ones31 + bit_at(v, 31)
-        if bit_at(v, 0) != bit_at(v, 1) { split_near = split_near + 1 }
-        if bit_at(v, 0) != bit_at(v, 31) { split_far = split_far + 1 }
+        if bit_at(v, 0) != bit_at(v, 1) { r1 = r1 + 1 }
+        if bit_at(v, 0) != bit_at(v, 8) { r8 = r8 + 1 }
+        if bit_at(v, 0) != bit_at(v, 31) { r31 = r31 + 1 }
     }
-    let fr: f32 = (recomb as f32) / (DRAWS as f32)
-    if absf(fr - 0.5) > 0.015 {
-        printf("FAIL 5 recombinant fraction %f, expected 0.5\n", fr as f64)
-        return 5
-    }
-    let f0: f32 = (ones0 as f32) / (DRAWS as f32)
-    let f31: f32 = (ones31 as f32) / (DRAWS as f32)
+    let n: f32 = DRAWS as f32
+    let f0: f32 = (ones0 as f32) / n
+    let f31: f32 = (ones31 as f32) / n
     if absf(f0 - 0.5) > 0.015 or absf(f31 - 0.5) > 0.015 {
         printf("FAIL 6 segregation %f\n", f0 as f64)
         return 6
     }
-    let near: f32 = (split_near as f32) / (DRAWS as f32)
-    let far: f32 = (split_far as f32) / (DRAWS as f32)
-    printf("  recombinant %.4f  segregation %.4f  r(0,1) %.4f  r(0,31) %.4f\n",
-           fr as f64, f0 as f64, near as f64, far as f64)
-    if near > 0.03 or far < 0.45 {
-        printf("FAIL 9 linkage near %f far %f\n", near as f64, far as f64)
-        return 9
+    let o1: f32 = (r1 as f32) / n
+    let o8: f32 = (r8 as f32) / n
+    let o31: f32 = (r31 as f32) / n
+    let e1: f32 = haldane(1.0 / 31.0)
+    let e8: f32 = haldane(8.0 / 31.0)
+    let e31: f32 = haldane(1.0)
+    printf("  r over 1 gap %.4f (Haldane %.4f)  8 gaps %.4f (%.4f)  31 gaps %.4f (%.4f)\n",
+           o1 as f64, e1 as f64, o8 as f64, e8 as f64, o31 as f64, e31 as f64)
+    if absf(o1 - e1) > 0.006 or absf(o8 - e8) > 0.014 or absf(o31 - e31) > 0.015 {
+        printf("FAIL 5 recombination does not follow Haldane\n")
+        return 5
     }
 
-    # 7. Mutation count per gamete is Poisson with the requested mean.
+    # 7. Mutations per gamete are Poisson with the requested mean.
     # 8. Zero mutation rate means zero mutations.
-    for c in 0 to 8 {
-        parent[c] = 0 as u32
-    }
-    let lambda: f32 = 0.5
-    let p0: f32 = mutation_p0(lambda)
+    fill(parent, 0 as u32)
+    arch_set_mu(&a, 0.5 / (LOCI as f32))
     let mut flips: i32 = 0
     for k in 0 to DRAWS {
-        gen_gamete(parent, 0, out, 0, &st, 0.5, lambda, p0)
+        gen_gamete(parent, 0, out, 0, &st, &a)
         for c in 0 to CHROMS {
             flips = flips + popcount32(out[c])
         }
     }
-    # Two mutations can hit the same locus and cancel, which lowers the
-    # observed mean by about lambda^2 / LOCI. Negligible at this size.
-    let mean_flips: f32 = (flips as f32) / (DRAWS as f32)
+    let mean_flips: f32 = (flips as f32) / n
     printf("  mutations per gamete %.4f, expected 0.5\n", mean_flips as f64)
-    if absf(mean_flips - lambda) > 0.025 {
+    if absf(mean_flips - 0.5) > 0.025 {
         printf("FAIL 7 mutation mean %f\n", mean_flips as f64)
         return 7
     }
+    arch_set_mu(&a, 0.0)
     for k in 0 to DRAWS {
-        gen_gamete(parent, 0, out, 0, &st, 0.5, 0.0, 1.0)
+        gen_gamete(parent, 0, out, 0, &st, &a)
         for c in 0 to CHROMS {
             if out[c] != (0 as u32) {
                 printf("FAIL 8 mutation at zero rate\n")
@@ -165,31 +160,75 @@ function main() -> i32 {
         }
     }
 
-    # 10. Phenotype ranges at the extremes of dosage.
-    for c in 0 to 8 {
-        parent[c] = 0 as u32
+    # 12. Back mutation at deleterious loci runs at back_frac of the forward
+    #     rate; elsewhere mutation is symmetric.
+    fill(parent, 0xFFFFFFFF as u32)
+    arch_set_mu(&a, 4.0 / (LOCI as f32))
+    let mut del_rev: i32 = 0
+    let mut other_rev: i32 = 0
+    for k in 0 to DRAWS {
+        gen_gamete(parent, 0, out, 0, &st, &a)
+        del_rev = del_rev + 16 - popcount32(out[2] & MASK_HI16)
+        other_rev = other_rev + 112 - popcount32(out[0]) - popcount32(out[1])
+                    - popcount32(out[2] & MASK_LO16) - popcount32(out[3])
     }
-    if absf(gen_speed(parent, 0) - 0.15) > 0.0001 or gen_sense(parent, 0) != 1 {
-        printf("FAIL 10 minimum phenotype\n")
+    let ratio: f32 = ((del_rev as f32) / 16.0) / ((other_rev as f32) / 112.0)
+    printf("  back/forward mutation ratio at deleterious loci %.4f, expected %.2f\n",
+           ratio as f64, a.back_frac as f64)
+    if absf(ratio - a.back_frac) > 0.02 {
+        printf("FAIL 12 back mutation ratio %f\n", ratio as f64)
+        return 12
+    }
+
+    # 13. Effects in each trait block are positive and sum to one, so the
+    #     genotypic value runs from 0 to 1.
+    for blk in 0 to 5 {
+        let mut sum: f32 = 0.0
+        for k in 0 to 16 {
+            let e: f32 = a.additive[blk * 16 + k]
+            if e <= 0.0 {
+                printf("FAIL 13 nonpositive effect\n")
+                return 13
+            }
+            sum = sum + e
+        }
+        if absf(sum - 1.0) > 0.0001 {
+            printf("FAIL 13 effects sum to %f\n", sum as f64)
+            return 13
+        }
+    }
+    fill(parent, 0 as u32)
+    if absf(gen_value(parent, 0, &a, LOCUS_TOPT)) > 0.0001 {
+        printf("FAIL 10 minimum genotypic value\n")
         return 10
     }
-    for c in 0 to 8 {
-        parent[c] = 0xFFFFFFFF as u32
+    fill(parent, 0xFFFFFFFF as u32)
+    if absf(gen_value(parent, 0, &a, LOCUS_SPEED) - 1.0) > 0.0001 {
+        printf("FAIL 10 maximum genotypic value\n")
+        return 10
     }
-    if absf(gen_speed(parent, 0) - 1.2) > 0.0001 or gen_sense(parent, 0) != 5
-       or absf(gen_thermal(parent, 0) - 1.0) > 0.0001 {
-        printf("FAIL 10 maximum phenotype\n")
+    # One allele at one locus moves the value by half that locus's effect.
+    fill(parent, 0 as u32)
+    parent[0] = 1 << 3
+    if absf(gen_value(parent, 0, &a, LOCUS_TOPT) - 0.5 * a.additive[3]) > 0.00001 {
+        printf("FAIL 10 single-allele effect\n")
         return 10
     }
 
-    # 11. Load counts loci homozygous for the deleterious allele only.
-    for c in 0 to 8 {
-        parent[c] = 0 as u32
-    }
+    # 11. Load, burden and viability with dominance.
+    fill(parent, 0 as u32)
     parent[2] = 0x000F0000 as u32
     parent[6] = 0x00030000 as u32
     if gen_load(parent, 0) != 2 or gen_burden(parent, 0) != 6 {
         printf("FAIL 11 load %d burden %d\n", gen_load(parent, 0), gen_burden(parent, 0))
+        return 11
+    }
+    let s: ptr<f32> = a.sel
+    let h: f32 = a.dom
+    let want: f32 = (1.0 - s[80]) * (1.0 - s[81]) * (1.0 - h * s[82]) * (1.0 - h * s[83])
+    let got: f32 = gen_viability(parent, 0, &a)
+    if absf(got - want) > 0.00001 {
+        printf("FAIL 11 viability %f expected %f\n", got as f64, want as f64)
         return 11
     }
 

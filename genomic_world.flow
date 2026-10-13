@@ -3,8 +3,9 @@
 # 256 x 256 cells, tens of thousands of agents. Every agent carries a
 # bit-packed diploid genome of four chromosomes and 128 loci. Additive loci
 # build five traits (thermal optimum, speed, sensing range, body size,
-# breeding threshold); sixteen housekeeping loci carry recessive deleterious
-# alleles; thirty neutral marker loci give each lineage its colour.
+# breeding threshold) with exponentially distributed effects; sixteen loci
+# carry partially recessive deleterious alleles; thirty neutral marker loci
+# give each lineage its colour.
 #
 # Organisms forage, pay for their traits in energy, find mates nearby, and
 # pass on recombined, mutated gametes. Temperature varies with latitude, so
@@ -24,6 +25,7 @@ import gsim.stats
 import gsim.world
 import gsim.canvas
 import gsim.render
+import gsim.sampling
 
 const STATS_EVERY: i32 = 4
 const HIST_EVERY: i32 = 16
@@ -50,7 +52,7 @@ function main() -> i32 {
     let mut w: World = sim_init(20261013 as u32)
     let mut s: Stats = stats_alloc()
     let cv: Canvas = canvas_new(WIN_W, WIN_H)
-    let mut ui: Ui = Ui { view: VIEW_ANCESTRY, steps: 2, paused: false, mu_level: 1 }
+    let mut ui: Ui = Ui { view: VIEW_ANCESTRY, steps: 2, paused: false, mu_level: 1, exported: 0 }
     let mut keys: Keys = Keys { held: [false, false, false, false, false, false, false, false,
                                        false, false, false, false, false, false, false, false] }
     let mut world_seed: u32 = 20261013 as u32
@@ -77,6 +79,12 @@ function main() -> i32 {
             world_seed = world_seed * (1664525 as u32) + (1013904223 as u32)
             sim_reseed(&w, world_seed)
             stats_reset_history(&s)
+        }
+        if pressed(g, &keys, 12, KEY_E) {
+            stats_compute(&s, &w)
+            if export_sample(&w, &s, 1000) > 0 {
+                ui.exported = w.tick as i32
+            }
         }
         if pressed(g, &keys, 10, KEY_RBRACKET) and ui.steps < 16 { ui.steps = ui.steps * 2 }
         if pressed(g, &keys, 11, KEY_LBRACKET) and ui.steps > 1 { ui.steps = ui.steps / 2 }

@@ -1,9 +1,18 @@
 # Population-genetic summaries.
 #
 #   freq[l]      allele 1 frequency at locus l, all agents
-#   F_ST         Hudson-style fixation index between the inner and outer
-#                regions over the 30 marker loci: (H_T - H_S) / H_T, ratio
-#                of sums across loci
+#   F_ST         Hudson's estimator between the inner and outer regions over
+#                the 30 marker loci, as a ratio of sums across loci
+#                (Bhatia et al. 2013, Genome Research 23:1514)
+#   h2_po        slope of offspring thermal phenotype on mid-parent
+#                phenotype, over living agents with known parents
+#   h2_v         Vg / (Vg + Ve) for thermal optimum: Vg is the variance of
+#                genotypic values among living agents, Ve = env_sd^2
+#   gen_time     mean parental age at birth, ticks per generation
+#   sigma        axial dispersal distance per generation, in cells
+#   nb           Wright's neighbourhood size 4 pi D sigma^2, D the density
+#                of agents per land cell
+#   load         genetic load 1 - mean viability
 #   het          mean expected heterozygosity 2p(1 - p) at marker loci
 #   adapt_r      Pearson correlation between an agent's thermal optimum and
 #                the temperature of the row it stands in
@@ -40,6 +49,12 @@ struct Stats {
     mean_repro: f32,
     mean_load: f32,
     mean_burden: f32,
+    h2_po: f32,
+    h2_v: f32,
+    gen_time: f32,
+    sigma: f32,
+    nb: f32,
+    load: f32,
     band_topt: ptr<f32>,
     band_temp: ptr<f32>,
     band_n: ptr<i32>,
@@ -62,6 +77,7 @@ export function stats_alloc() -> Stats {
         fst: 0.0, het: 0.0, adapt_r: 0.0, mismatch: 0.0,
         mean_topt: 0.0, mean_spd: 0.0, mean_sense: 0.0, mean_size: 0.0,
         mean_repro: 0.0, mean_load: 0.0, mean_burden: 0.0,
+        h2_po: 0.0, h2_v: 0.0, gen_time: 0.0, sigma: 0.0, nb: 0.0, load: 0.0,
         band_topt: alloc_f32(LAT_BANDS as i64),
         band_temp: alloc_f32(LAT_BANDS as i64),
         band_n: alloc_i32(LAT_BANDS as i64),
@@ -122,29 +138,30 @@ function allele_counts(s: ptr<Stats>, w: ptr<World>) -> void {
     }
 }
 
-# Marker loci are chromosome 3, bits 0-29.
+# Marker loci are chromosome 3, bits 0-29. Hudson's F_ST with the
+# sample-size correction, using 2n allele copies per region.
 function marker_stats(s: ptr<Stats>) -> void {
-    let mut ht_sum: f32 = 0.0
-    let mut hs_sum: f32 = 0.0
+    let mut num: f32 = 0.0
+    let mut den: f32 = 0.0
     let mut het_sum: f32 = 0.0
-    let tot: f32 = (s.n0 + s.n1) as f32
-    let w0: f32 = (s.n0 as f32) / tot
-    let w1: f32 = (s.n1 as f32) / tot
+    let c0: f32 = 2.0 * (s.n0 as f32)
+    let c1: f32 = 2.0 * (s.n1 as f32)
     for k in 0 to MARKER_LOCI {
         let l: i32 = 96 + k
         let p: f32 = s.freq[l]
-        let p0: f32 = s.freq0[l]
-        let p1: f32 = s.freq1[l]
-        let ht: f32 = 2.0 * p * (1.0 - p)
-        let hs: f32 = w0 * 2.0 * p0 * (1.0 - p0) + w1 * 2.0 * p1 * (1.0 - p1)
-        ht_sum = ht_sum + ht
-        hs_sum = hs_sum + hs
-        het_sum = het_sum + ht
+        het_sum = het_sum + 2.0 * p * (1.0 - p)
+        if c0 > 1.0 and c1 > 1.0 {
+            let p0: f32 = s.freq0[l]
+            let p1: f32 = s.freq1[l]
+            let d: f32 = p0 - p1
+            num = num + d * d - p0 * (1.0 - p0) / (c0 - 1.0) - p1 * (1.0 - p1) / (c1 - 1.0)
+            den = den + p0 * (1.0 - p1) + p1 * (1.0 - p0)
+        }
     }
     s.het = het_sum / (MARKER_LOCI as f32)
     s.fst = 0.0
-    if ht_sum > 0.000001 and s.n0 > 0 and s.n1 > 0 {
-        s.fst = (ht_sum - hs_sum) / ht_sum
+    if den > 0.000001 {
+        s.fst = num / den
     }
 }
 
@@ -168,7 +185,28 @@ function trait_stats(s: ptr<Stats>, w: ptr<World>) -> void {
     let mut rep: f64 = 0.0
     let mut lod: f64 = 0.0
     let mut bur: f64 = 0.0
+    let mut sg: f64 = 0.0
+    let mut sgg: f64 = 0.0
+    let mut viab: f64 = 0.0
+    let mut pn: f64 = 0.0
+    let mut pm: f64 = 0.0
+    let mut pmm: f64 = 0.0
+    let mut po: f64 = 0.0
+    let mut pmo: f64 = 0.0
     for i in 0 to n {
+        let gv: f64 = w.gtopt[i] as f64
+        sg = sg + gv
+        sgg = sgg + gv * gv
+        viab = viab + (w.viab[i] as f64)
+        if w.mid[i] >= 0.0 {
+            let m: f64 = w.mid[i] as f64
+            let ph: f64 = w.topt[i] as f64
+            pn = pn + 1.0
+            pm = pm + m
+            pmm = pmm + m * m
+            po = po + ph
+            pmo = pmo + m * ph
+        }
         let row: i32 = (w.py[i] as i32) & (WORLD_H - 1)
         let t: f64 = w.temp_row[row] as f64
         let o: f64 = w.topt[i] as f64
@@ -209,6 +247,24 @@ function trait_stats(s: ptr<Stats>, w: ptr<World>) -> void {
     s.adapt_r = 0.0
     if vt > 0.0000001 and vo > 0.0000001 {
         s.adapt_r = (cov as f32) / sqrtf((vt * vo) as f32)
+    }
+    s.load = 1.0 - ((viab / fn) as f32)
+    let vg: f64 = sgg / fn - (sg / fn) * (sg / fn)
+    let ve: f64 = (w.arch.env_sd * w.arch.env_sd) as f64
+    s.h2_v = 0.0
+    if vg + ve > 0.0 { s.h2_v = (vg / (vg + ve)) as f32 }
+    s.h2_po = 0.0
+    if pn > 100.0 {
+        let vm: f64 = pmm / pn - (pm / pn) * (pm / pn)
+        let cmo: f64 = pmo / pn - (pm / pn) * (po / pn)
+        if vm > 0.0 { s.h2_po = (cmo / vm) as f32 }
+    }
+    s.gen_time = w.gen_time
+    s.sigma = sqrtf(w.disp2)
+    s.nb = 0.0
+    if w.land_cells > 0 {
+        let density: f32 = (n as f32) / (w.land_cells as f32)
+        s.nb = 12.566371 * density * w.disp2
     }
 }
 

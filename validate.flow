@@ -1,0 +1,289 @@
+# Validation of the genetic engine against classical population genetics.
+#
+# Every case runs the simulator's own meiosis, mutation and viability code
+# in a Wright-Fisher population (sim/wf.flow) and compares with theory:
+#
+#   1  drift        H_t / H_0 = (1 - 1/2N)^t
+#   2  mutation-    E[2pq] = 4Nu / (1 + 8Nu) for a biallelic locus with
+#      drift        symmetric mutation rate u (Wright 1931)
+#   3  mutation-    q = u / (h s) for partially recessive alleles, and
+#      selection    q = sqrt(u / s) for fully recessive ones (Haldane 1937)
+#   4  linkage      D_t = D_0 (1 - r)^t with r from Haldane's map function
+#   5  selection    p' = p (1 + s) / (1 + p s) for multiplicative fitness
+#   6  fixation     u = (1 - e^(-2s)) / (1 - e^(-4Ns)) for a new mutation
+#                   (Kimura 1962); 1/2N when neutral
+#
+# Results go to stdout and out/validation.tsv. Exit code is the number of
+# failed cases.
+#
+# Run: ./run.sh validate
+
+import gsim.config
+import gsim.rng
+import gsim.genome
+import gsim.wf
+import gsim.textbuf
+
+extern {
+    function expf(x: f32) -> f32
+    function sqrtf(x: f32) -> f32
+    function powf(x: f32, y: f32) -> f32
+}
+
+function absf(x: f32) -> f32 {
+    if x < 0.0 { return 0.0 - x }
+    return x
+}
+
+# One result row. tol is an absolute tolerance on |sim - theory|.
+function report(t: ptr<TextBuf>, name: string, detail: string, theory: f32, sim: f32, tol: f32) -> i32 {
+    let ok: bool = absf(sim - theory) <= tol
+    let mut verdict: string = "PASS"
+    if !ok { verdict = "FAIL" }
+    printf("  %-22s %-34s theory %8.4f  sim %8.4f  tol %6.4f  %s\n",
+           name, detail, theory as f64, sim as f64, tol as f64, verdict)
+    tb_str(t, name)
+    tb_tab(t)
+    tb_str(t, detail)
+    tb_tab(t)
+    tb_fixed(t, theory as f64, 5)
+    tb_tab(t)
+    tb_fixed(t, sim as f64, 5)
+    tb_tab(t)
+    tb_fixed(t, tol as f64, 5)
+    tb_tab(t)
+    tb_str(t, verdict)
+    tb_nl(t)
+    if ok { return 0 }
+    return 1
+}
+
+function neutral_arch(mu: f32) -> Arch {
+    let mut a: Arch = arch_new(7 as u32)
+    arch_set_mu(&a, mu)
+    arch_set_map(&a, 1.0)
+    return a
+}
+
+function check_drift(t: ptr<TextBuf>) -> i32 {
+    let n: i32 = 100
+    let reps: i32 = 60
+    let a: Arch = neutral_arch(0.0)
+    let mut p: Wf = wf_new(n)
+    let mut h0: f32 = 0.0
+    let mut h50: f32 = 0.0
+    let mut h100: f32 = 0.0
+    let mut h200: f32 = 0.0
+    for r in 0 to reps {
+        let mut st: u32 = rng_stream(1001 as u32, r as u32, 1 as u32)
+        wf_random(&p, 0.5, &st)
+        h0 = h0 + wf_het(&p, 0, LOCI)
+        for g in 1 to 201 {
+            wf_generation(&p, &a, &st, WF_NEUTRAL, 0.0)
+            if g == 50 { h50 = h50 + wf_het(&p, 0, LOCI) }
+            if g == 100 { h100 = h100 + wf_het(&p, 0, LOCI) }
+            if g == 200 { h200 = h200 + wf_het(&p, 0, LOCI) }
+        }
+    }
+    let k: f32 = 1.0 - 1.0 / (2.0 * (n as f32))
+    let mut fails: i32 = 0
+    fails = fails + report(t, "drift", "N=100, H50/H0", powf(k, 50.0), h50 / h0, 0.04)
+    fails = fails + report(t, "drift", "N=100, H100/H0", powf(k, 100.0), h100 / h0, 0.04)
+    fails = fails + report(t, "drift", "N=100, H200/H0", powf(k, 200.0), h200 / h0, 0.04)
+    return fails
+}
+
+function check_mutation_drift(t: ptr<TextBuf>) -> i32 {
+    let n: i32 = 200
+    let mu: f32 = 0.0005
+    let a: Arch = neutral_arch(mu)
+    let mut p: Wf = wf_new(n)
+    let mut sum: f32 = 0.0
+    let mut count: i32 = 0
+    for r in 0 to 8 {
+        let mut st: u32 = rng_stream(2002 as u32, r as u32, 1 as u32)
+        wf_random(&p, 0.5, &st)
+        for g in 0 to 5000 {
+            wf_generation(&p, &a, &st, WF_NEUTRAL, 0.0)
+            if g >= 2000 and g % 10 == 0 {
+                # loci 0-79 and 96-127: symmetric mutation only
+                sum = sum + (wf_het(&p, 0, LOCUS_DEL) * 80.0 + wf_het(&p, LOCUS_MARK, LOCI) * 32.0) / 112.0
+                count = count + 1
+            }
+        }
+    }
+    let theta: f32 = 4.0 * (n as f32) * mu
+    return report(t, "mutation-drift", "N=200, u=5e-4, mean 2pq",
+                  theta / (1.0 + 2.0 * theta), sum / (count as f32), 0.02)
+}
+
+function msb_case(t: ptr<TextBuf>, h: f32, s: f32, label: string, seed: u32) -> i32 {
+    let n: i32 = 5000
+    let mu: f32 = 0.0005
+    let mut a: Arch = neutral_arch(mu)
+    a.dom = h
+    arch_uniform_sel(&a, s)
+    let mut p: Wf = wf_new(n)
+    let mut st: u32 = rng_stream(seed, 0 as u32, 1 as u32)
+    let mut sum: f32 = 0.0
+    let mut count: i32 = 0
+    for g in 0 to 2000 {
+        wf_generation(&p, &a, &st, WF_VIABILITY, 0.0)
+        if g >= 1000 and g % 5 == 0 {
+            let mut q: f32 = 0.0
+            for l in LOCUS_DEL to LOCUS_MARK {
+                q = q + wf_freq(&p, l)
+            }
+            sum = sum + q / 16.0
+            count = count + 1
+        }
+    }
+    let mut theory: f32 = 0.0
+    if h > 0.0 {
+        theory = mu / (h * s)
+    } else {
+        theory = sqrtf(mu / s)
+    }
+    return report(t, "mutation-selection", label, theory, sum / (count as f32), 0.15 * theory)
+}
+
+function check_ld(t: ptr<TextBuf>) -> i32 {
+    let n: i32 = 5000
+    let a: Arch = neutral_arch(0.0)
+    let mut p: Wf = wf_new(n)
+    let mut d1: f32 = 0.0
+    let mut d8: f32 = 0.0
+    let reps: i32 = 3
+    for r in 0 to reps {
+        let mut st: u32 = rng_stream(4004 as u32, r as u32, 1 as u32)
+        wf_clear(&p)
+        # Random union of two haplotypes, all-0 and all-1 on chromosome 0:
+        # p = 1/2 at every locus and D = 1/4 between every pair.
+        for i in 0 to n {
+            if rng_unit(&st) < 0.5 { p.g[i * GENOME_WORDS] = 0xFFFFFFFF as u32 }
+            if rng_unit(&st) < 0.5 { p.g[i * GENOME_WORDS + CHROMS] = 0xFFFFFFFF as u32 }
+        }
+        for g in 0 to 10 {
+            wf_generation(&p, &a, &st, WF_NEUTRAL, 0.0)
+        }
+        d1 = d1 + wf_ld(&p, 0, 1)
+        d8 = d8 + wf_ld(&p, 0, 8)
+    }
+    let r1: f32 = haldane(1.0 / 31.0)
+    let r8: f32 = haldane(8.0 / 31.0)
+    let mut fails: i32 = 0
+    fails = fails + report(t, "linkage", "D after 10 gens, 1 gap", 0.25 * powf(1.0 - r1, 10.0), d1 / (reps as f32), 0.01)
+    fails = fails + report(t, "linkage", "D after 10 gens, 8 gaps", 0.25 * powf(1.0 - r8, 10.0), d8 / (reps as f32), 0.01)
+    return fails
+}
+
+# Deterministic recursion from p0 for g generations.
+function recursion(p0: f32, s: f32, g: i32) -> f32 {
+    let mut q: f32 = p0
+    for k in 0 to g {
+        q = q * (1.0 + s) / (1.0 + q * s)
+    }
+    return q
+}
+
+# Drift perturbs each replicate's path and selection amplifies early
+# deviations, so the tolerance is four standard errors of the mean deviation
+# from theory, measured across replicates. Each replicate's prediction
+# starts from its own realised p0.
+function check_selection(t: ptr<TextBuf>) -> i32 {
+    let n: i32 = 10000
+    let s: f32 = 0.05
+    let a: Arch = neutral_arch(0.0)
+    let mut p: Wf = wf_new(n)
+    let reps: i32 = 20
+    let checkpoints: array<i32, 3> = [25, 50, 100]
+    let mut dev: array<f32, 3> = [0.0, 0.0, 0.0]
+    let mut dev2: array<f32, 3> = [0.0, 0.0, 0.0]
+    let mut theo: array<f32, 3> = [0.0, 0.0, 0.0]
+    for r in 0 to reps {
+        let mut st: u32 = rng_stream(5005 as u32, r as u32, 1 as u32)
+        wf_clear(&p)
+        for i in 0 to n {
+            if rng_unit(&st) < 0.1 { p.g[i * GENOME_WORDS] = 1 as u32 }
+            if rng_unit(&st) < 0.1 { p.g[i * GENOME_WORDS + CHROMS] = 1 as u32 }
+        }
+        let p0: f32 = wf_freq(&p, 0)
+        let mut k: i32 = 0
+        for g in 1 to 101 {
+            wf_generation(&p, &a, &st, WF_GENIC, s)
+            if k < 3 and g == checkpoints[k] {
+                let e: f32 = recursion(p0, s, g)
+                let d: f32 = wf_freq(&p, 0) - e
+                dev[k] = dev[k] + d
+                dev2[k] = dev2[k] + d * d
+                theo[k] = theo[k] + e
+                k = k + 1
+            }
+        }
+    }
+    let rf: f32 = reps as f32
+    let mut fails: i32 = 0
+    for k in 0 to 3 {
+        let m: f32 = dev[k] / rf
+        let var: f32 = (dev2[k] / rf - m * m) * rf / (rf - 1.0)
+        let se: f32 = sqrtf(var / rf)
+        let e: f32 = theo[k] / rf
+        if k == 0 { fails = fails + report(t, "selection", "s=0.05, p0~0.1, p at gen 25", e, e + m, 4.0 * se) }
+        if k == 1 { fails = fails + report(t, "selection", "s=0.05, p0~0.1, p at gen 50", e, e + m, 4.0 * se) }
+        if k == 2 { fails = fails + report(t, "selection", "s=0.05, p0~0.1, p at gen 100", e, e + m, 4.0 * se) }
+    }
+    return fails
+}
+
+function fix_prob(n: i32, s: f32, reps: i32, seed: u32) -> f32 {
+    let a: Arch = neutral_arch(0.0)
+    let mut p: Wf = wf_new(n)
+    let mut fixed: i32 = 0
+    for r in 0 to reps {
+        let mut st: u32 = rng_stream(seed, r as u32, 1 as u32)
+        wf_clear(&p)
+        p.g[0] = 1 as u32
+        let mut q: f32 = 1.0 / (2.0 * (n as f32))
+        while q > 0.0 and q < 1.0 {
+            wf_generation(&p, &a, &st, WF_GENIC, s)
+            q = wf_freq(&p, 0)
+        }
+        if q >= 1.0 { fixed = fixed + 1 }
+    }
+    return (fixed as f32) / (reps as f32)
+}
+
+function check_fixation(t: ptr<TextBuf>) -> i32 {
+    let n: i32 = 100
+    let reps: i32 = 6000
+    let s: f32 = 0.02
+    let kimura: f32 = (1.0 - expf(-2.0 * s)) / (1.0 - expf(-4.0 * (n as f32) * s))
+    let mut fails: i32 = 0
+    fails = fails + report(t, "fixation", "N=100, neutral, 6000 reps",
+                           1.0 / (2.0 * (n as f32)), fix_prob(n, 0.0, reps, 6006 as u32), 0.0035)
+    fails = fails + report(t, "fixation", "N=100, s=0.02, 6000 reps",
+                           kimura, fix_prob(n, s, reps, 6007 as u32), 0.009)
+    return fails
+}
+
+function main() -> i32 {
+    let mut t: TextBuf = tb_new(1 << 14)
+    tb_str(&t, "case\tdetail\ttheory\tsim\ttolerance\tresult\n")
+    printf("Validation against population-genetic theory\n")
+    let mut fails: i32 = 0
+    fails = fails + check_drift(&t)
+    fails = fails + check_mutation_drift(&t)
+    fails = fails + msb_case(&t, 0.5, 0.1, "N=5000, u=5e-4, s=0.1, h=0.5", 3003 as u32)
+    fails = fails + msb_case(&t, 0.25, 0.1, "N=5000, u=5e-4, s=0.1, h=0.25", 3004 as u32)
+    fails = fails + msb_case(&t, 0.0, 0.1, "N=5000, u=5e-4, s=0.1, h=0", 3005 as u32)
+    fails = fails + check_ld(&t)
+    fails = fails + check_selection(&t)
+    fails = fails + check_fixation(&t)
+    let saved: bool = tb_save(&t, "out/validation.tsv")
+    if fails == 0 {
+        printf("OK all cases within tolerance\n")
+    } else {
+        printf("FAIL %d cases outside tolerance\n", fails)
+    }
+    return fails
+}

@@ -1,66 +1,191 @@
-# Genome layout, expression and meiosis.
+# Genome layout, genetic architecture, expression and meiosis.
 #
 # Each organism is diploid with four chromosomes. A chromosome is one 32-bit
-# word with one biallelic locus per bit. Words 0-3 are one homolog set and
-# words 4-7 the other, so chromosome c is the pair (word c, word c + 4).
+# word with one biallelic locus per bit. Words 0-3 are the maternal homologs
+# and words 4-7 the paternal ones, so chromosome c is the pair (word c,
+# word c + 4) and haplotypes are phased.
 #
 #   chr 0  bits  0-15  thermal optimum   16 additive loci
 #          bits 16-31  speed             16 additive loci
 #   chr 1  bits  0-15  sensing range
 #          bits 16-31  body size
-#   chr 2  bits  0-15  reproduction threshold
-#          bits 16-31  housekeeping loci, allele 1 is recessive deleterious
+#   chr 2  bits  0-15  breeding threshold
+#          bits 16-31  deleterious loci: allele 1 lowers viability
 #   chr 3  bits  0-29  neutral markers, three blocks of ten read as colour
 #          bits 30-31  neutral
 #
-# A trait is the dosage of allele 1 over its sixteen loci on both homologs,
-# 0 to 32, scaled into the trait's range. Loci sharing a chromosome are
-# linked, so selection on thermal optimum carries speed alleles with it.
+# Architecture (Arch, drawn once per world from its seed):
+#   additive[l] additive effect of allele 1 at a trait locus. Exponentially
+#              distributed, so a few loci are large and most are small, then
+#              scaled so a block's effects sum to one. The genotypic value
+#              of a trait is sum(effect * dosage) / 2, in [0, 1].
+#   sel[l]     selection coefficient at a deleterious locus, exponential
+#              with mean SEL_MEAN.
+#   dom        dominance h. Viability is the product over deleterious loci
+#              of (1 - h s) for a heterozygote and (1 - s) for a homozygote.
+#   map_len    genetic map length of each chromosome in Morgans. Crossovers
+#              per meiosis are Poisson with this mean, at uniform positions
+#              between loci, with no interference (Haldane's model).
+#   mu         mutation rate per locus per gamete. Trait and marker loci
+#              mutate symmetrically. At deleterious loci the back mutation
+#              rate is back_frac * mu.
+#   env_sd     environmental standard deviation added to every trait's
+#              genotypic value at birth.
 
+import "stdlib/memory.flow"
 import .config
 import .bits
 import .rng
+
+extern {
+    function logf(x: f32) -> f32
+    function expf(x: f32) -> f32
+    function sqrtf(x: f32) -> f32
+    function cosf(x: f32) -> f32
+}
+
+struct Arch {
+    additive: ptr<f32>,
+    sel: ptr<f32>,
+    dom: f32,
+    map_len: f32,
+    xo_p0: f32,
+    mu: f32,
+    lambda: f32,
+    mut_p0: f32,
+    back_frac: f32,
+    env_sd: f32
+}
+
+# First locus of each trait block.
+const LOCUS_TOPT: i32 = 0
+const LOCUS_SPEED: i32 = 16
+const LOCUS_SENSE: i32 = 32
+const LOCUS_SIZE: i32 = 48
+const LOCUS_REPRO: i32 = 64
+const LOCUS_DEL: i32 = 80
+const LOCUS_MARK: i32 = 96
+
+export function locus_class(l: i32) -> i32 {
+    if l >= LOCUS_MARK { return 6 }
+    if l >= LOCUS_DEL { return 5 }
+    return l / 16
+}
+
+export function is_deleterious(l: i32) -> bool {
+    return l >= LOCUS_DEL and l < LOCUS_MARK
+}
+
+export function arch_set_mu(a: ptr<Arch>, mu: f32) -> void {
+    a.mu = mu
+    a.lambda = mu * (LOCI as f32)
+    a.mut_p0 = expf(0.0 - a.lambda)
+}
+
+export function arch_set_map(a: ptr<Arch>, morgans: f32) -> void {
+    a.map_len = morgans
+    a.xo_p0 = expf(0.0 - morgans)
+}
+
+export function arch_new(seed: u32) -> Arch {
+    let mut a: Arch = Arch {
+        additive: alloc_f32(LOCI as i64),
+        sel: alloc_f32(LOCI as i64),
+        dom: DEFAULT_DOM,
+        map_len: 1.0,
+        xo_p0: 1.0,
+        mu: 0.0,
+        lambda: 0.0,
+        mut_p0: 1.0,
+        back_frac: BACK_MUT_FRAC,
+        env_sd: DEFAULT_ENV_SD
+    }
+    arch_set_mu(&a, DEFAULT_MU)
+    arch_set_map(&a, DEFAULT_MAP_LEN)
+    arch_draw(&a, seed)
+    return a
+}
+
+# Draw effect sizes and selection coefficients.
+export function arch_draw(a: ptr<Arch>, seed: u32) -> void {
+    let mut st: u32 = rng_stream(seed, 0 as u32, 4242 as u32)
+    for l in 0 to LOCI {
+        a.additive[l] = 0.0
+        a.sel[l] = 0.0
+    }
+    for blk in 0 to 5 {
+        let first: i32 = blk * 16
+        let mut sum: f32 = 0.0
+        for k in 0 to 16 {
+            let e: f32 = 0.0 - logf(1.0 - rng_unit(&st))
+            a.additive[first + k] = e
+            sum = sum + e
+        }
+        for k in 0 to 16 {
+            a.additive[first + k] = a.additive[first + k] / sum
+        }
+    }
+    for k in 0 to 16 {
+        let mut s: f32 = (0.0 - logf(1.0 - rng_unit(&st))) * SEL_MEAN
+        if s > 1.0 { s = 1.0 }
+        a.sel[LOCUS_DEL + k] = s
+    }
+}
+
+# Every deleterious locus gets the same s. Used by the validation harness.
+export function arch_uniform_sel(a: ptr<Arch>, s: f32) -> void {
+    for k in 0 to 16 {
+        a.sel[LOCUS_DEL + k] = s
+    }
+}
+
+export function allele_dosage(g: ptr<u32>, base: i32, l: i32) -> i32 {
+    let w: i32 = l >> 5
+    let b: i32 = l & 31
+    return bit_at(g[base + w], b) + bit_at(g[base + w + CHROMS], b)
+}
 
 export function gen_dosage(a: u32, b: u32, mask: u32) -> i32 {
     return popcount32(a & mask) + popcount32(b & mask)
 }
 
-# Trait value in [0, 1] for a sixteen-locus block.
-export function gen_block01(g: ptr<u32>, base: i32, chrom: i32, mask: u32) -> f32 {
-    let d: i32 = gen_dosage(g[base + chrom], g[base + chrom + CHROMS], mask)
-    return (d as f32) * (1.0 / 32.0)
+# Genotypic value of a sixteen-locus trait block, in [0, 1].
+export function gen_value(g: ptr<u32>, base: i32, a: ptr<Arch>, first: i32) -> f32 {
+    let w: i32 = first >> 5
+    let shift: u32 = (first & 31) as u32
+    let ha: u32 = g[base + w] >> shift
+    let hb: u32 = g[base + w + CHROMS] >> shift
+    let mut v: f32 = 0.0
+    for k in 0 to 16 {
+        let d: u32 = ((ha >> (k as u32)) & (1 as u32)) + ((hb >> (k as u32)) & (1 as u32))
+        v = v + a.additive[first + k] * (d as f32)
+    }
+    return 0.5 * v
 }
 
-export function gen_thermal(g: ptr<u32>, base: i32) -> f32 {
-    return gen_block01(g, base, 0, MASK_LO16)
+# Viability from the deleterious loci, multiplicative across loci.
+export function gen_viability(g: ptr<u32>, base: i32, a: ptr<Arch>) -> f32 {
+    let ha: u32 = g[base + 2] >> 16
+    let hb: u32 = g[base + 6] >> 16
+    let mut w: f32 = 1.0
+    for k in 0 to 16 {
+        let d: u32 = ((ha >> (k as u32)) & (1 as u32)) + ((hb >> (k as u32)) & (1 as u32))
+        let s: f32 = a.sel[LOCUS_DEL + k]
+        if d == (1 as u32) {
+            w = w * (1.0 - a.dom * s)
+        } elif d == (2 as u32) {
+            w = w * (1.0 - s)
+        }
+    }
+    return w
 }
 
-# Cells per tick.
-export function gen_speed(g: ptr<u32>, base: i32) -> f32 {
-    return 0.15 + 1.05 * gen_block01(g, base, 0, MASK_HI16)
-}
-
-# Sensing radius in cells, 1 to 5.
-export function gen_sense(g: ptr<u32>, base: i32) -> i32 {
-    let t: f32 = gen_block01(g, base, 1, MASK_LO16)
-    return 1 + ((t * 4.0 + 0.5) as i32)
-}
-
-export function gen_size(g: ptr<u32>, base: i32) -> f32 {
-    return 0.55 + 1.3 * gen_block01(g, base, 1, MASK_HI16)
-}
-
-# Energy needed to breed, as a multiple of body size.
-export function gen_repro(g: ptr<u32>, base: i32) -> f32 {
-    return 0.7 + 1.4 * gen_block01(g, base, 2, MASK_LO16)
-}
-
-# Housekeeping loci homozygous for the deleterious allele.
+# Deleterious loci homozygous for allele 1.
 export function gen_load(g: ptr<u32>, base: i32) -> i32 {
     return popcount32(g[base + 2] & g[base + 6] & MASK_HI16)
 }
 
-# Deleterious alleles carried in either state, homozygous loci counted twice.
+# Deleterious alleles carried, homozygous loci counted twice.
 export function gen_burden(g: ptr<u32>, base: i32) -> i32 {
     return gen_dosage(g[base + 2], g[base + 6], MASK_HI16)
 }
@@ -76,7 +201,7 @@ export function gen_color(g: ptr<u32>, base: i32) -> u32 {
     return ((r as u32) << 16) | ((gg as u32) << 8) | (bb as u32)
 }
 
-# Poisson draw by inversion. p0 is exp(-lambda), precomputed by the caller.
+# Poisson draw by inversion. p0 is exp(-lambda).
 export function gen_poisson(st: ptr<u32>, lambda: f32, p0: f32) -> i32 {
     let u: f32 = rng_unit(st)
     let mut k: i32 = 0
@@ -90,43 +215,67 @@ export function gen_poisson(st: ptr<u32>, lambda: f32, p0: f32) -> i32 {
     return k
 }
 
-# One chromosome through meiosis: pick the starting homolog, then with
-# probability xover swap to the other homolog at a uniform breakpoint.
-export function gen_meiosis_word(h0: u32, h1: u32, st: ptr<u32>, xover: f32) -> u32 {
+# Standard normal, Box-Muller.
+export function gen_normal(st: ptr<u32>) -> f32 {
+    let u1: f32 = 1.0 - rng_unit(st)
+    let u2: f32 = rng_unit(st)
+    return sqrtf(-2.0 * logf(u1)) * cosf(6.2831853 * u2)
+}
+
+# One chromosome through meiosis. The starting homolog is chosen at random;
+# each crossover switches homolog at a uniform gap between adjacent loci.
+export function gen_meiosis_word(h0: u32, h1: u32, st: ptr<u32>, a: ptr<Arch>) -> u32 {
     let mut first: u32 = h0
     let mut second: u32 = h1
     if (rng_next(st) & (1 as u32)) == (1 as u32) {
         first = h1
         second = h0
     }
-    if rng_unit(st) < xover {
-        let k: i32 = 1 + rng_below(st, 31)
-        let m: u32 = low_mask(k)
-        return (first & m) | (second & invert32(m))
+    let k: i32 = gen_poisson(st, a.map_len, a.xo_p0)
+    if k == 0 {
+        return first
     }
-    return first
+    # Bits at or above each breakpoint come from the other homolog; two
+    # breakpoints in the same gap cancel, as two crossovers there would.
+    let mut sw: u32 = 0 as u32
+    for j in 0 to k {
+        let b: i32 = 1 + rng_below(st, 31)
+        sw = sw ^ invert32(low_mask(b))
+    }
+    return (first & invert32(sw)) | (second & sw)
 }
 
 # Write one gamete (four words) from parent genome src[sb..sb+8] into
 # dst[db..db+4], with recombination and point mutation.
 export function gen_gamete(src: ptr<u32>, sb: i32, dst: ptr<u32>, db: i32,
-                           st: ptr<u32>, xover: f32, lambda: f32, p0: f32) -> void {
+                           st: ptr<u32>, a: ptr<Arch>) -> void {
     for c in 0 to CHROMS {
-        dst[db + c] = gen_meiosis_word(src[sb + c], src[sb + c + CHROMS], st, xover)
+        dst[db + c] = gen_meiosis_word(src[sb + c], src[sb + c + CHROMS], st, a)
     }
-    let muts: i32 = gen_poisson(st, lambda, p0)
+    let muts: i32 = gen_poisson(st, a.lambda, a.mut_p0)
     for m in 0 to muts {
         let locus: i32 = rng_below(st, LOCI)
         let w: i32 = locus >> 5
         let b: i32 = locus & 31
-        dst[db + w] = dst[db + w] ^ ((1 as u32) << (b as u32))
+        let bit: u32 = (1 as u32) << (b as u32)
+        let mut apply: bool = true
+        if is_deleterious(locus) and (dst[db + w] & bit) != (0 as u32) {
+            apply = rng_unit(st) < a.back_frac
+        }
+        if apply {
+            dst[db + w] = dst[db + w] ^ bit
+        }
     }
 }
 
-# Child genome at dst[db..db+8] from two parents.
+# Child genome at dst[db..db+8]: maternal gamete then paternal gamete.
 export function gen_cross(mom: ptr<u32>, mb: i32, dad: ptr<u32>, fb: i32,
-                          dst: ptr<u32>, db: i32, st: ptr<u32>,
-                          xover: f32, lambda: f32, p0: f32) -> void {
-    gen_gamete(mom, mb, dst, db, st, xover, lambda, p0)
-    gen_gamete(dad, fb, dst, db + CHROMS, st, xover, lambda, p0)
+                          dst: ptr<u32>, db: i32, st: ptr<u32>, a: ptr<Arch>) -> void {
+    gen_gamete(mom, mb, dst, db, st, a)
+    gen_gamete(dad, fb, dst, db + CHROMS, st, a)
+}
+
+# Haldane's map function: recombination fraction for map distance d Morgans.
+export function haldane(d: f32) -> f32 {
+    return 0.5 * (1.0 - expf(-2.0 * d))
 }

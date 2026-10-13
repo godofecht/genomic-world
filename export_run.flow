@@ -1,0 +1,26 @@
+# Run the spatial model headless for 3000 ticks and export a sample of 1000
+# individuals: out/sample.vcf, out/sample.tsv, out/loci.tsv.
+#
+# Run: ./run.sh export
+
+import gsim.config
+import gsim.state
+import gsim.step
+import gsim.stats
+import gsim.sampling
+
+const TICKS: i32 = 3000
+
+function main() -> i32 {
+    let mut w: World = sim_init(20261013 as u32)
+    let mut s: Stats = stats_alloc()
+    for t in 0 to TICKS {
+        sim_step(&w)
+    }
+    stats_compute(&s, &w)
+    let k: i32 = export_sample(&w, &s, 1000)
+    printf("tick %d, population %d, exported %d individuals\n", w.tick as i32, w.n, k)
+    printf("  out/sample.vcf  out/sample.tsv  out/loci.tsv\n")
+    if k == 0 { return 1 }
+    return 0
+}

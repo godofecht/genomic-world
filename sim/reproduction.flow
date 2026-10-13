@@ -1,10 +1,12 @@
 # Sexual reproduction.
 #
-# An agent breeds when it is mature, off cooldown, and holds at least its
-# genetic threshold of energy. It needs a mate in its own cell or one of the
-# eight around it. The child gets one recombined, mutated gamete from each
-# parent. A child homozygous at LETHAL_LOAD or more housekeeping loci is not
-# viable; the parents still pay.
+# Organisms are simultaneous hermaphrodites that do not self. An agent breeds
+# when it is mature, off cooldown, and holds at least its genetic threshold
+# of energy. Its mate is drawn uniformly from the eligible agents in its own
+# cell and the eight around it. The child gets one recombined, mutated
+# gamete from each parent, then survives viability selection with
+# probability equal to its viability from the deleterious loci. The parents
+# pay either way.
 #
 # This pass is serial so that two agents never claim the same mate in one
 # tick. Children are appended after slot n and join the population at the
@@ -17,33 +19,50 @@ import .genome
 import .world
 import .population
 
+# Weight of each new birth in the running estimates of generation time and
+# dispersal.
+const EMA_RATE: f32 = 0.002
+
 # A mate is mature, off cooldown and fed above half its own threshold.
 function can_mate(w: ptr<World>, j: i32) -> bool {
     return w.age[j] >= MATURE_AGE and w.cd[j] == 0 and w.en[j] > 0.5 * w.thr[j]
 }
 
+# Uniform choice among eligible mates in the 3 x 3 neighbourhood, by
+# reservoir sampling, so scan order does not bias who is chosen.
 function find_mate(w: ptr<World>, i: i32, st: ptr<u32>) -> i32 {
     let cx: i32 = w.px[i] as i32
     let cy: i32 = w.py[i] as i32
-    let off: i32 = rng_below(st, 9)
-    let mut k: i32 = 0
-    while k < 9 {
-        let kk: i32 = (k + off) % 9
+    let mut chosen: i32 = -1
+    let mut seen: i32 = 0
+    for kk in 0 to 9 {
         let nx: i32 = (cx + (kk % 3) - 1) & (WORLD_W - 1)
         let ny: i32 = (cy + (kk / 3) - 1) & (WORLD_H - 1)
         let c: i32 = ny * WORLD_W + nx
-        let e: i32 = w.cell_start[c + 1]
-        let mut s: i32 = w.cell_start[c]
-        while s < e {
+        for s in w.cell_start[c] to w.cell_start[c + 1] {
             let j: i32 = w.order[s]
             if j != i and can_mate(w, j) {
-                return j
+                seen = seen + 1
+                if rng_below(st, seen) == 0 {
+                    chosen = j
+                }
             }
-            s = s + 1
         }
-        k = k + 1
     }
-    return -1
+    return chosen
+}
+
+function torus_delta(d: f32, size: i32) -> f32 {
+    let half: f32 = (size as f32) * 0.5
+    let mut r: f32 = d
+    if r > half { r = r - (size as f32) }
+    if r < 0.0 - half { r = r + (size as f32) }
+    return r
+}
+
+function ema(old: f32, x: f32) -> f32 {
+    if old == 0.0 { return x }
+    return old + EMA_RATE * (x - old)
 }
 
 # Returns the slot count including newborns.
@@ -52,6 +71,7 @@ export function reproduce(w: ptr<World>) -> i32 {
     let mut total: i32 = n
     let tick: u32 = w.tick
     let g: ptr<u32> = w.genome
+    let a: ptr<Arch> = &w.arch
     let mut i: i32 = 0
     while i < n and total < N_MAX {
         if w.age[i] >= MATURE_AGE and w.cd[i] == 0 and w.en[i] >= w.thr[i] {
@@ -60,14 +80,14 @@ export function reproduce(w: ptr<World>) -> i32 {
             if j >= 0 {
                 let c: i32 = total
                 gen_cross(g, i * GENOME_WORDS, g, j * GENOME_WORDS,
-                          g, c * GENOME_WORDS, &st, w.xover, w.lambda, w.p0)
+                          g, c * GENOME_WORDS, &st, a)
                 let pay_i: f32 = 0.55 * w.thr[i]
                 let pay_j: f32 = 0.15 * w.thr[j]
                 w.en[i] = w.en[i] - pay_i
                 w.en[j] = w.en[j] - pay_j
                 w.cd[i] = COOLDOWN
                 w.cd[j] = COOLDOWN
-                if gen_load(g, c * GENOME_WORDS) >= LETHAL_LOAD {
+                if rng_unit(&st) >= gen_viability(g, c * GENOME_WORDS, a) {
                     w.stillborn = w.stillborn + 1
                 } else {
                     w.px[c] = wrap_x(w.px[i] + rng_unit(&st) - 0.5)
@@ -76,14 +96,27 @@ export function reproduce(w: ptr<World>) -> i32 {
                         w.px[c] = w.px[i]
                         w.py[c] = w.py[i]
                     }
+                    w.bx[c] = w.px[c]
+                    w.by[c] = w.py[c]
+                    w.mid[c] = 0.5 * (w.topt[i] + w.topt[j])
                     w.hd[c] = rng_unit(&st) * 6.2831853
                     w.age[c] = 0
                     w.cd[c] = 0
                     w.seed_of[c] = pop_fresh_seed(w)
-                    pop_express(w, c)
+                    pop_express(w, c, &st)
                     w.en[c] = 0.85 * (pay_i + pay_j)
                     total = total + 1
                     w.births = w.births + 1
+
+                    # Generation time: mean parental age at birth.
+                    let pa: f32 = 0.5 * ((w.age[i] + w.age[j]) as f32)
+                    w.gen_time = ema(w.gen_time, pa)
+                    # Dispersal: parent's birthplace to child's birthplace,
+                    # one generation apart. Axial variance is half the
+                    # squared distance.
+                    let dx: f32 = torus_delta(w.bx[c] - w.bx[i], WORLD_W)
+                    let dy: f32 = torus_delta(w.by[c] - w.by[i], WORLD_H)
+                    w.disp2 = ema(w.disp2, 0.5 * (dx * dx + dy * dy))
                 }
             }
         }

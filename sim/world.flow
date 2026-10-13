@@ -10,6 +10,7 @@ import .config
 import .state
 import .climate
 import .rng
+import .genome
 
 extern {
     function cosf(x: f32) -> f32
@@ -36,7 +37,12 @@ export function agents_alloc() -> Agents {
         sense: alloc_i32(nm),
         load: alloc_i32(nm),
         col: alloc_zeroed(nm * 4) as ptr<u32>,
-        genome: alloc_zeroed(nm * 4 * (GENOME_WORDS as i64)) as ptr<u32>
+        genome: alloc_zeroed(nm * 4 * (GENOME_WORDS as i64)) as ptr<u32>,
+        gtopt: alloc_f32(nm),
+        mid: alloc_f32(nm),
+        bx: alloc_f32(nm),
+        by: alloc_f32(nm),
+        viab: alloc_f32(nm)
     }
 }
 
@@ -51,10 +57,7 @@ export function world_alloc(seed: u32) -> World {
         climate: Climate_new(),
         passes_open: true,
         warming_dir: 0,
-        mu: DEFAULT_MU,
-        xover: DEFAULT_XOVER,
-        lambda: 0.0,
-        p0: 1.0,
+        arch: arch_new(seed),
         thermal_cost: THERMAL_COST,
         food: alloc_f32(nc),
         fert: alloc_f32(nc),
@@ -76,6 +79,11 @@ export function world_alloc(seed: u32) -> World {
         load: a.load,
         col: a.col,
         genome: a.genome,
+        gtopt: a.gtopt,
+        mid: a.mid,
+        bx: a.bx,
+        by: a.by,
+        viab: a.viab,
         back: agents_alloc(),
         slot_dst: alloc_i32(nm),
         cell_of: alloc_i32(nm),
@@ -86,17 +94,18 @@ export function world_alloc(seed: u32) -> World {
         stillborn: 0,
         starved: 0,
         old_age: 0,
+        killed: 0,
         pending: 0,
-        next_seed: seed
+        next_seed: seed,
+        gen_time: 0.0,
+        disp2: 0.0,
+        land_cells: 0
     }
     return w
 }
 
-# Mutation rate per locus per gamete; caches the Poisson parameters.
 export function world_set_mu(w: ptr<World>, mu: f32) -> void {
-    w.mu = mu
-    w.lambda = mu * (LOCI as f32)
-    w.p0 = expf(0.0 - w.lambda)
+    arch_set_mu(&w.arch, mu)
 }
 
 export function cell_index(x: f32, y: f32) -> i32 {
@@ -239,6 +248,11 @@ export function world_build_terrain(w: ptr<World>) -> void {
             food[c] = f * 0.6
         }
     }
+    let mut land: i32 = 0
+    for c in 0 to WORLD_CELLS {
+        if terrain[c] == TERRAIN_LAND { land = land + 1 }
+    }
+    w.land_cells = land
     flood_zones(w)
 }
 
