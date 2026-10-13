@@ -59,6 +59,7 @@ export function world_alloc(seed: u32) -> World {
         warming_dir: 0,
         arch: arch_new(seed),
         thermal_cost: THERMAL_COST,
+        mortality: BG_MORTALITY,
         food: alloc_f32(nc),
         fert: alloc_f32(nc),
         terrain: alloc_zeroed(nc) as ptr<u8>,

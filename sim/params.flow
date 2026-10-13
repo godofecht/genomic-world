@@ -1,0 +1,58 @@
+# Runtime parameters from environment variables, so replicates and
+# parameter sweeps need no recompilation. Unset variables keep the defaults
+# in config.flow.
+#
+#   GW_SEED        world seed                               20261013
+#   GW_MU          mutation rate per locus per gamete       5e-4
+#   GW_DOM         dominance h of deleterious alleles       0.25
+#   GW_SEL_MEAN    mean s at deleterious loci               0.03
+#   GW_MAP         map length per chromosome, Morgans       1.0
+#   GW_ENV_SD      environmental SD on the 0-1 trait scale  0.1
+#   GW_THERMAL     strength of thermal selection            0.05
+#   GW_MORTALITY   background death rate per tick           0.003
+#   GW_PASSES      1 open, 0 closed                         1
+#   GW_OUT         directory for exported files             out
+
+import .config
+import .state
+import .genome
+
+extern {
+    function getenv(name: string) -> ptr<u8>
+    function atof(s: ptr<u8>) -> f64
+}
+
+function env_f32(name: string, fallback: f32) -> f32 {
+    let v: ptr<u8> = getenv(name)
+    if v == null { return fallback }
+    return atof(v) as f32
+}
+
+export function params_seed(fallback: u32) -> u32 {
+    let v: ptr<u8> = getenv("GW_SEED")
+    if v == null { return fallback }
+    return (atof(v) as i64) as u32
+}
+
+export function params_out_dir() -> string {
+    let v: ptr<u8> = getenv("GW_OUT")
+    if v == null { return "out" }
+    return v as string
+}
+
+# Apply overrides to a freshly allocated world, before terrain and founders.
+export function params_apply(w: ptr<World>) -> void {
+    let a: ptr<Arch> = &w.arch
+    arch_set_mu(a, env_f32("GW_MU", a.mu))
+    arch_set_map(a, env_f32("GW_MAP", a.map_len))
+    a.dom = env_f32("GW_DOM", a.dom)
+    a.env_sd = env_f32("GW_ENV_SD", a.env_sd)
+    let sm: f32 = env_f32("GW_SEL_MEAN", a.sel_mean)
+    if sm != a.sel_mean {
+        a.sel_mean = sm
+        arch_draw(a, w.seed)
+    }
+    w.thermal_cost = env_f32("GW_THERMAL", w.thermal_cost)
+    w.mortality = env_f32("GW_MORTALITY", w.mortality)
+    w.passes_open = env_f32("GW_PASSES", 1.0) > 0.5
+}

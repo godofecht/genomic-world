@@ -21,6 +21,7 @@ import "stdlib/keys.flow"
 import gsim.config
 import gsim.state
 import gsim.step
+import gsim.params
 import gsim.stats
 import gsim.world
 import gsim.canvas
@@ -49,7 +50,7 @@ function mu_for(level: i32) -> f32 {
 }
 
 function main() -> i32 {
-    let mut w: World = sim_init(20261013 as u32)
+    let mut w: World = sim_init(params_seed(20261013 as u32))
     let mut s: Stats = stats_alloc()
     let cv: Canvas = canvas_new(WIN_W, WIN_H)
     let mut ui: Ui = Ui { view: VIEW_ANCESTRY, steps: 2, paused: false, mu_level: 1, exported: 0 }

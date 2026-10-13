@@ -44,6 +44,7 @@ struct World {
     # genetics and selection
     arch: Arch,
     thermal_cost: f32,
+    mortality: f32,
 
     # field, WORLD_CELLS each
     food: ptr<f32>,

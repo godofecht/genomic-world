@@ -20,7 +20,7 @@
 #              scaled so a block's effects sum to one. The genotypic value
 #              of a trait is sum(effect * dosage) / 2, in [0, 1].
 #   sel[l]     selection coefficient at a deleterious locus, exponential
-#              with mean SEL_MEAN.
+#              with mean sel_mean.
 #   dom        dominance h. Viability is the product over deleterious loci
 #              of (1 - h s) for a heterozygote and (1 - s) for a homozygote.
 #   map_len    genetic map length of each chromosome in Morgans. Crossovers
@@ -54,7 +54,8 @@ struct Arch {
     lambda: f32,
     mut_p0: f32,
     back_frac: f32,
-    env_sd: f32
+    env_sd: f32,
+    sel_mean: f32
 }
 
 # First locus of each trait block.
@@ -98,7 +99,8 @@ export function arch_new(seed: u32) -> Arch {
         lambda: 0.0,
         mut_p0: 1.0,
         back_frac: BACK_MUT_FRAC,
-        env_sd: DEFAULT_ENV_SD
+        env_sd: DEFAULT_ENV_SD,
+        sel_mean: SEL_MEAN
     }
     arch_set_mu(&a, DEFAULT_MU)
     arch_set_map(&a, DEFAULT_MAP_LEN)
@@ -126,7 +128,7 @@ export function arch_draw(a: ptr<Arch>, seed: u32) -> void {
         }
     }
     for k in 0 to 16 {
-        let mut s: f32 = (0.0 - logf(1.0 - rng_unit(&st))) * SEL_MEAN
+        let mut s: f32 = (0.0 - logf(1.0 - rng_unit(&st))) * a.sel_mean
         if s > 1.0 { s = 1.0 }
         a.sel[LOCUS_DEL + k] = s
     }

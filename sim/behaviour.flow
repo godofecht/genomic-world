@@ -3,7 +3,7 @@
 # Each tick an agent samples food at its sensing radius in eight directions,
 # heads for the best one, moves at its genetic speed, and pays for it:
 #
-# Each tick an agent also dies with probability BG_MORTALITY regardless of
+# Each tick an agent also dies with probability w.mortality regardless of
 # its state.
 #
 #   cost = basal * size
@@ -46,6 +46,7 @@ export function behave(w: ptr<World>) -> void {
     let terrain: ptr<u8> = w.terrain
     let temp_row: ptr<f32> = w.temp_row
     let thermal_cost: f32 = w.thermal_cost
+    let mortality: f32 = w.mortality
     let dx: array<f32, 8> = [1.0, 0.70710678, 0.0, -0.70710678, -1.0, -0.70710678, 0.0, 0.70710678]
     let dy: array<f32, 8> = [0.0, 0.70710678, 1.0, 0.70710678, 0.0, -0.70710678, -1.0, -0.70710678]
 
@@ -100,7 +101,7 @@ export function behave(w: ptr<World>) -> void {
         cost = cost + thermal_cost * z * dt * dt
 
         en[i] = en[i] - cost
-        if rng_unit(&st) < BG_MORTALITY {
+        if rng_unit(&st) < mortality {
             en[i] = KILLED
         }
         age[i] = age[i] + 1

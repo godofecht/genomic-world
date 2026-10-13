@@ -16,10 +16,11 @@ import .population
 import .behaviour
 import .reproduction
 import .genome
+import .params
 
 export function sim_init(seed: u32) -> World {
     let mut w: World = world_alloc(seed)
-    world_set_mu(&w, DEFAULT_MU)
+    params_apply(&w)
     world_build_terrain(&w)
     world_update_temperature(&w)
     pop_found(&w)

@@ -17,6 +17,7 @@ import .world
 import .stats
 import .bits
 import .textbuf
+import .params
 import "stdlib/memory.flow"
 
 export function class_name(c: i32) -> string {
@@ -63,6 +64,22 @@ export function export_sample(w: ptr<World>, s: ptr<Stats>, want: i32) -> i32 {
     tb_u64(&t, w.seed as i64)
     tb_str(&t, "\n##genomicworld_population=")
     tb_u64(&t, w.n as i64)
+    tb_str(&t, "\n##genomicworld_params=mu:")
+    tb_fixed(&t, a.mu as f64, 6)
+    tb_str(&t, ",h:")
+    tb_fixed(&t, a.dom as f64, 3)
+    tb_str(&t, ",sel_mean:")
+    tb_fixed(&t, a.sel_mean as f64, 4)
+    tb_str(&t, ",map_morgans:")
+    tb_fixed(&t, a.map_len as f64, 3)
+    tb_str(&t, ",env_sd:")
+    tb_fixed(&t, a.env_sd as f64, 3)
+    tb_str(&t, ",thermal:")
+    tb_fixed(&t, w.thermal_cost as f64, 4)
+    tb_str(&t, ",mortality:")
+    tb_fixed(&t, w.mortality as f64, 4)
+    tb_str(&t, ",passes_open:")
+    if w.passes_open { tb_str(&t, "1") } else { tb_str(&t, "0") }
     tb_nl(&t)
     for c in 0 to CHROMS {
         tb_str(&t, "##contig=<ID=chr")
@@ -114,7 +131,7 @@ export function export_sample(w: ptr<World>, s: ptr<Stats>, want: i32) -> i32 {
         }
         tb_nl(&t)
     }
-    let ok1: bool = tb_save(&t, "out/sample.vcf")
+    let ok1: bool = tb_save(&t, params_out_dir() + "/sample.vcf")
 
     tb_clear(&t)
     tb_str(&t, "id\tx\ty\tregion\ttemperature\ttopt\ttopt_genotypic\tspeed\tsense\tsize\trepro_threshold\tviability\tburden\tage\tenergy\n")
@@ -152,7 +169,7 @@ export function export_sample(w: ptr<World>, s: ptr<Stats>, want: i32) -> i32 {
         tb_fixed(&t, w.en[i] as f64, 4)
         tb_nl(&t)
     }
-    let ok2: bool = tb_save(&t, "out/sample.tsv")
+    let ok2: bool = tb_save(&t, params_out_dir() + "/sample.tsv")
 
     tb_clear(&t)
     tb_str(&t, "locus\tchrom\tpos\tclass\teffect\ts\th\tmap_morgans_from_pos1\tfreq\n")
@@ -176,7 +193,7 @@ export function export_sample(w: ptr<World>, s: ptr<Stats>, want: i32) -> i32 {
         tb_fixed(&t, s.freq[l] as f64, 5)
         tb_nl(&t)
     }
-    let ok3: bool = tb_save(&t, "out/loci.tsv")
+    let ok3: bool = tb_save(&t, params_out_dir() + "/loci.tsv")
     if ok1 and ok2 and ok3 { return k }
     return 0
 }

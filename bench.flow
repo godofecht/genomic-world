@@ -9,6 +9,7 @@ import "stdlib/experiment.flow"
 import gsim.config
 import gsim.state
 import gsim.step
+import gsim.params
 import gsim.stats
 import gsim.canvas
 import gsim.render
@@ -21,7 +22,7 @@ const BENCH_TICKS: i32 = 3000
 const REPORT_EVERY: i32 = 250
 
 function main() -> i32 {
-    let mut w: World = sim_init(20261013 as u32)
+    let mut w: World = sim_init(params_seed(20261013 as u32))
     let mut s: Stats = stats_alloc()
     let mut phase_ns: array<i64, 8> = [0, 0, 0, 0, 0, 0, 0, 0]
     printf("threads %d\n", omp_get_max_threads())
