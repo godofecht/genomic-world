@@ -1,0 +1,146 @@
+# One organism's state, as a record, and its phenotype from its genome.
+#
+# Records live in one array; the genome, body lattice, expressed
+# developmental genes and brain weights live in parallel blocks indexed by
+# the same slot.
+
+import gsim.bits
+import gsim.rng
+import gsim.genome
+import .lconfig
+import .lgenome
+import .develop
+
+# 25 four-byte fields: CR_BYTES must match.
+struct Creature {
+    px: f32,
+    py: f32,
+    hd: f32,
+    en: f32,
+    mass: f32,
+    upkeep: f32,
+    vmax: f32,
+    bite: f32,
+    attack: f32,
+    defense: f32,
+    ecap: f32,
+    range: f32,
+    range_side: f32,
+    thr: f32,
+    topt: f32,
+    age: i32,
+    cd: i32,
+    mouths: i32,
+    eyes: i32,
+    cells: i32,
+    kills: i32,
+    gen: i32,
+    seed: u32,
+    col: u32,
+    plan: u32
+}
+
+const CR_BYTES: i64 = 100
+
+# Per-cell contribution to mass and to upkeep, indexed by cell type.
+function l_cell_mass(t: i32) -> f32 {
+    if t == CELL_ARMOR { return 2.0 }
+    if t == CELL_EYE { return 0.5 }
+    if t == 0 { return 0.0 }
+    return 1.0
+}
+
+function l_cell_upkeep(t: i32) -> f32 {
+    if t == CELL_MOTOR { return 1.5 }
+    if t == CELL_EYE { return 1.2 }
+    if t == CELL_MOUTH { return 1.2 }
+    if t == CELL_ARMOR { return 0.8 }
+    if t == CELL_STORE { return 0.5 }
+    if t == 0 { return 0.0 }
+    return 1.0
+}
+
+# Develop slot i from its genome and derive its phenotype.
+export function express(c: ptr<Creature>, g: ptr<u32>, dev: ptr<u32>, body: ptr<u8>,
+                        brain: ptr<f32>, i: i32) -> void {
+    let gb: i32 = i * L_WORDS
+    l_dev_express(g, gb, dev, i * 4)
+    develop(dev, i * 4, body, i * BODY_CELLS)
+    let bb: i32 = i * BODY_CELLS
+    let mut mass: f32 = 0.0
+    let mut upk: f32 = 0.0
+    let mut cells: i32 = 0
+    for k in 0 to BODY_CELLS {
+        let t: i32 = body[bb + k] as i32
+        mass = mass + l_cell_mass(t)
+        upk = upk + l_cell_upkeep(t)
+        if t != 0 { cells = cells + 1 }
+    }
+    let motors: i32 = count_cells(body, bb, CELL_MOTOR)
+    let eyes: i32 = count_cells(body, bb, CELL_EYE)
+    let mouths: i32 = count_cells(body, bb, CELL_MOUTH)
+    let spikes: i32 = count_cells(body, bb, CELL_SPIKE)
+    let armor: i32 = count_cells(body, bb, CELL_ARMOR)
+    let stores: i32 = count_cells(body, bb, CELL_STORE)
+    c[i].mass = mass
+    c[i].upkeep = upk
+    c[i].cells = cells
+    let mut v: f32 = 0.15 + 1.5 * (motors as f32) / mass
+    if v > 1.6 { v = 1.6 }
+    c[i].vmax = v
+    c[i].bite = 0.06 * (mouths as f32)
+    c[i].mouths = mouths
+    c[i].attack = spikes as f32
+    c[i].defense = (armor as f32) + 0.5 * (spikes as f32)
+    c[i].ecap = 1.0 + 1.5 * mass + 3.0 * (stores as f32)
+    # Eyes on the midline see ahead; paired eyes off the midline see to the
+    # front-left and front-right.
+    let mut axial: i32 = 0
+    for x in 0 to BODY {
+        if (body[bb + 3 * BODY + x] as i32) == CELL_EYE { axial = axial + 1 }
+    }
+    let mut ef: f32 = 1.0 + 1.5 * (axial as f32)
+    if ef > 7.0 { ef = 7.0 }
+    let mut es: f32 = 1.0 + ((eyes - axial) as f32)
+    if es > 7.0 { es = 7.0 }
+    c[i].eyes = eyes
+    c[i].range = ef
+    c[i].range_side = es
+    let t01: f32 = (l_dosage(g, gb, LOC_THR, 12) as f32) / 24.0
+    c[i].thr = (0.35 + 0.5 * t01) * c[i].ecap
+    c[i].topt = (l_dosage(g, gb, LOC_THERMAL, 16) as f32) / 32.0
+    let mr: i32 = l_dosage(g, gb, LOC_MARK, 10)
+    let mg: i32 = l_dosage(g, gb, LOC_MARK + 10, 10)
+    let mb: i32 = l_dosage(g, gb, LOC_MARK + 20, 10)
+    c[i].col = (((60 + mr * 9) as u32) << 16) | (((60 + mg * 9) as u32) << 8) | ((60 + mb * 9) as u32)
+    c[i].plan = body_hash(body, bb)
+    for k in 0 to BRAIN_W {
+        brain[i * BRAIN_W + k] = l_weight(g, gb, k)
+    }
+}
+
+# The founding genotype: core with a mouth in front and a motor behind, and
+# a brain that turns toward food and slows down over it. Everything else
+# about the founders is random or zero.
+export function luca(g: ptr<u32>, i: i32, st: ptr<u32>) -> void {
+    let gb: i32 = i * L_WORDS
+    for w in 0 to L_WORDS {
+        g[gb + w] = 0 as u32
+    }
+    l_set_gene(g, gb, CELL_CORE, 0, (8 | CELL_MOUTH) as u32)
+    l_set_gene(g, gb, CELL_CORE, 2, (8 | CELL_MOTOR) as u32)
+    for k in 0 to BRAIN_W {
+        l_set_weight(g, gb, k, 0.0)
+    }
+    l_set_weight(g, gb, 0, 2.5)
+    l_set_weight(g, gb, 2, -2.5)
+    l_set_weight(g, gb, BRAIN_IN + 1, -1.5)
+    l_set_weight(g, gb, BRAIN_IN + 6, 1.0)
+    # Thermal and threshold loci at frequency one half.
+    for h in 0 to 2 {
+        let hb: i32 = gb + h * L_CHROMS
+        g[hb + 3] = (g[hb + 3] & MASK_LO16) | (rng_word(st) & MASK_HI16)
+        let thr_bits: u32 = rng_word(st) & (low_mask(12) << (20 as u32))
+        g[hb + 6] = (g[hb + 6] & invert32(low_mask(12) << (20 as u32))) | thr_bits
+    }
+}

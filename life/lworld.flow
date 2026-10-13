@@ -1,0 +1,534 @@
+# The life world: organisms with bodies on the genomic world's landscape.
+#
+# The environment (terrain, ridges, passes, climate, food) is a World from
+# sim/ with no agents of its own. Organisms are Creature records with
+# parallel genome, body, developmental and brain blocks.
+#
+# One tick:
+#   environment  climate, temperature, food regrowth
+#   index        counting sort of organisms by cell
+#   sense, act   eyes sample food ahead and to each side at the sensing
+#                range; the nearest prey and threat in range are found
+#                through the index; the brain turns and sets thrust; the
+#                body pays upkeep, movement and thermal costs   parallel
+#   index        again, after movement
+#   feed         per cell: mouths graze, then organisms with spikes and a
+#                mouth attack one other organism in the cell   parallel by row
+#   reproduce    mate in the 3 x 3 neighbourhood, only with a compatible
+#                developmental genotype; child develops      serial
+#   compact      drop the dead
+
+import "stdlib/memory.flow"
+import gsim.config
+import gsim.state
+import gsim.rng
+import gsim.bits
+import gsim.genome
+import gsim.world
+import gsim.climate
+import .lconfig
+import .lgenome
+import .develop
+import .brain
+import .creature
+
+extern {
+    function cosf(x: f32) -> f32
+    function sinf(x: f32) -> f32
+    function expf(x: f32) -> f32
+    function sqrtf(x: f32) -> f32
+    function memcpy(dst: ptr<void>, src: ptr<void>, n: i64) -> ptr<void>
+}
+
+struct Life {
+    env: World,
+    arch: Arch,
+    lambda: f32,
+    p0: f32,
+    seed: u32,
+    next_seed: u32,
+    tick: u32,
+    n: i32,
+    cr: ptr<Creature>,
+    genome: ptr<u32>,
+    body: ptr<u8>,
+    dev: ptr<u32>,
+    brain: ptr<f32>,
+    cr2: ptr<Creature>,
+    genome2: ptr<u32>,
+    body2: ptr<u8>,
+    dev2: ptr<u32>,
+    brain2: ptr<f32>,
+    dst: ptr<i32>,
+    cell_of: ptr<i32>,
+    start: ptr<i32>,
+    fill: ptr<i32>,
+    order: ptr<i32>,
+    births: i32,
+    kills: i32,
+    starved: i32,
+    rejected: i32
+}
+
+export function life_new(seed: u32) -> Life {
+    let m: i64 = LIFE_MAX as i64
+    let mut env: World = world_alloc(seed)
+    world_build_terrain(&env)
+    for c in 0 to WORLD_CELLS {
+        env.fert[c] = env.fert[c] * L_FERTILITY
+        env.food[c] = env.food[c] * L_FERTILITY
+    }
+    world_update_temperature(&env)
+    let mut a: Arch = arch_new(seed)
+    arch_set_map(&a, L_MAP)
+    let lam: f32 = L_MU * (L_LOCI as f32)
+    let mut l: Life = Life {
+        env: env, arch: a, lambda: lam, p0: expf(0.0 - lam),
+        seed: seed, next_seed: seed, tick: 0 as u32, n: 0,
+        cr: alloc_bytes(m * CR_BYTES) as ptr<Creature>,
+        genome: alloc_zeroed(m * 4 * (L_WORDS as i64)) as ptr<u32>,
+        body: alloc_zeroed(m * (BODY_CELLS as i64)) as ptr<u8>,
+        dev: alloc_zeroed(m * 16) as ptr<u32>,
+        brain: alloc_f32(m * (BRAIN_W as i64)),
+        cr2: alloc_bytes(m * CR_BYTES) as ptr<Creature>,
+        genome2: alloc_zeroed(m * 4 * (L_WORDS as i64)) as ptr<u32>,
+        body2: alloc_zeroed(m * (BODY_CELLS as i64)) as ptr<u8>,
+        dev2: alloc_zeroed(m * 16) as ptr<u32>,
+        brain2: alloc_f32(m * (BRAIN_W as i64)),
+        dst: alloc_i32(m),
+        cell_of: alloc_i32(m),
+        start: alloc_i32((WORLD_CELLS + 1) as i64),
+        fill: alloc_i32(WORLD_CELLS as i64),
+        order: alloc_i32(m),
+        births: 0, kills: 0, starved: 0, rejected: 0
+    }
+    return l
+}
+
+function l_fresh_seed(l: ptr<Life>) -> u32 {
+    l.next_seed = rng_hash(l.next_seed + (0x6a09e667 as u32))
+    return l.next_seed
+}
+
+# Founders: L_FOUNDERS copies of the founding genotype spread over the land,
+# in eight marker groups by nearest group centre.
+export function life_found(l: ptr<Life>) -> void {
+    let mut st: u32 = rng_stream(l.seed, 0 as u32, 7 as u32)
+    let gx: array<f32, 8> = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    let gy: array<f32, 8> = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    let mark: array<u32, 8> = [0, 0, 0, 0, 0, 0, 0, 0]
+    for k in 0 to 8 {
+        gx[k] = rng_unit(&st) * (WORLD_W as f32)
+        gy[k] = rng_unit(&st) * (WORLD_H as f32)
+        mark[k] = low_mask(rng_below(&st, 11)) | (low_mask(rng_below(&st, 11)) << (10 as u32))
+                | (low_mask(rng_below(&st, 11)) << (20 as u32))
+    }
+    l.n = 0
+    while l.n < L_FOUNDERS {
+        let x: f32 = rng_unit(&st) * (WORLD_W as f32)
+        let y: f32 = rng_unit(&st) * (WORLD_H as f32)
+        if l.env.terrain[cell_index(x, y)] == TERRAIN_LAND {
+            let i: i32 = l.n
+            luca(l.genome, i, &st)
+            let mut best: i32 = 0
+            let mut bd: f32 = 1000000000.0
+            for k in 0 to 8 {
+                let ddx: f32 = x - gx[k]
+                let ddy: f32 = y - gy[k]
+                let d: f32 = ddx * ddx + ddy * ddy
+                if d < bd {
+                    bd = d
+                    best = k
+                }
+            }
+            l.genome[i * L_WORDS + 7] = mark[best]
+            l.genome[i * L_WORDS + 15] = mark[best]
+            express(l.cr, l.genome, l.dev, l.body, l.brain, i)
+            l.cr[i].px = x
+            l.cr[i].py = y
+            l.cr[i].hd = rng_unit(&st) * 6.2831853
+            l.cr[i].en = 0.6 * l.cr[i].ecap
+            l.cr[i].age = rng_below(&st, L_MATURE * 2)
+            l.cr[i].cd = 0
+            l.cr[i].kills = 0
+            l.cr[i].gen = 0
+            l.cr[i].seed = l_fresh_seed(l)
+            l.n = l.n + 1
+        }
+    }
+}
+
+export function life_index(l: ptr<Life>) -> void {
+    let n: i32 = l.n
+    for c in 0 to WORLD_CELLS {
+        l.fill[c] = 0
+    }
+    for i in 0 to n {
+        let c: i32 = cell_index(l.cr[i].px, l.cr[i].py)
+        l.cell_of[i] = c
+        l.fill[c] = l.fill[c] + 1
+    }
+    let mut acc: i32 = 0
+    for c in 0 to WORLD_CELLS {
+        l.start[c] = acc
+        acc = acc + l.fill[c]
+        l.fill[c] = l.start[c]
+    }
+    l.start[WORLD_CELLS] = acc
+    for i in 0 to n {
+        let c: i32 = l.cell_of[i]
+        l.order[l.fill[c]] = i
+        l.fill[c] = l.fill[c] + 1
+    }
+}
+
+function l_food_at(food: ptr<f32>, x: f32, y: f32) -> f32 {
+    return food[cell_index(wrap_x(x), wrap_y(y))]
+}
+
+function l_wrap_d(d: f32, size: f32) -> f32 {
+    let mut r: f32 = d
+    if r > size * 0.5 { r = r - size }
+    if r < 0.0 - size * 0.5 { r = r + size }
+    return r
+}
+
+# Sense, decide, move and pay, for every organism in parallel. Each writes
+# only its own record; reads of others use last positions through the index.
+export function life_act(l: ptr<Life>) -> void {
+    let n: i32 = l.n
+    let cr: ptr<Creature> = l.cr
+    let brain: ptr<f32> = l.brain
+    let food: ptr<f32> = l.env.food
+    let terrain: ptr<u8> = l.env.terrain
+    let open: bool = l.env.passes_open
+    let temp_row: ptr<f32> = l.env.temp_row
+    let start: ptr<i32> = l.start
+    let order: ptr<i32> = l.order
+    let tick: u32 = l.tick
+    let fw: f32 = WORLD_W as f32
+    let fh: f32 = WORLD_H as f32
+    # Others are read from a snapshot taken before anyone moves, so the
+    # result does not depend on which thread runs first. cr2 is free until
+    # compaction.
+    let snap: ptr<Creature> = l.cr2
+    let copied: ptr<void> = memcpy(snap as ptr<void>, cr as ptr<void>, (n as i64) * CR_BYTES)
+    parallel for i in 0 to n {
+        let mut st: u32 = rng_stream(cr[i].seed, tick, 1 as u32)
+        let x: f32 = cr[i].px
+        let y: f32 = cr[i].py
+        let h: f32 = cr[i].hd
+        let r: f32 = cr[i].range
+        let rs: f32 = cr[i].range_side
+        let ch: f32 = cosf(h)
+        let sh: f32 = sinf(h)
+        let cl: f32 = cosf(h + 0.7)
+        let sl: f32 = sinf(h + 0.7)
+        let crr: f32 = cosf(h - 0.7)
+        let sr: f32 = sinf(h - 0.7)
+        let inp: array<f32, 7> = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+        inp[0] = l_food_at(food, x + rs * cl, y + rs * sl)
+        inp[1] = l_food_at(food, x + r * ch, y + r * sh)
+        inp[2] = l_food_at(food, x + rs * crr, y + rs * sr)
+
+        # Nearest prey and threat within the longer of the two ranges.
+        let mut rd: f32 = r
+        if rs > rd { rd = rs }
+        let ri: i32 = (rd as i32) + 1
+        let cx: i32 = x as i32
+        let cy: i32 = y as i32
+        let mut prey_d: f32 = 1000000.0
+        let mut prey_s: f32 = 0.0
+        let mut thr_d: f32 = 1000000.0
+        let mut thr_s: f32 = 0.0
+        let my_att: f32 = cr[i].attack
+        let my_def: f32 = cr[i].defense
+        for oy in 0 - ri to ri + 1 {
+            for ox in 0 - ri to ri + 1 {
+                let c: i32 = ((cy + oy) & (WORLD_H - 1)) * WORLD_W + ((cx + ox) & (WORLD_W - 1))
+                for s in start[c] to start[c + 1] {
+                    let j: i32 = order[s]
+                    if j != i {
+                        let ddx: f32 = l_wrap_d(snap[j].px - x, fw)
+                        let ddy: f32 = l_wrap_d(snap[j].py - y, fh)
+                        let d: f32 = sqrtf(ddx * ddx + ddy * ddy)
+                        if d <= rd {
+                            let side: f32 = ch * ddy - sh * ddx
+                            let mut lr: f32 = 1.0
+                            if side < 0.0 { lr = -1.0 }
+                            let near: f32 = 1.0 - d / (rd + 0.001)
+                            if my_att > snap[j].defense and cr[i].mouths > 0 and d < prey_d {
+                                prey_d = d
+                                prey_s = lr * near
+                            }
+                            if snap[j].attack > my_def and snap[j].mouths > 0 and d < thr_d {
+                                thr_d = d
+                                thr_s = lr * near
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        inp[3] = prey_s
+        inp[4] = thr_s
+        inp[5] = cr[i].en / cr[i].ecap
+
+        let turn: f32 = brain_turn(brain, i * BRAIN_W, inp)
+        let thrust: f32 = brain_thrust(brain, i * BRAIN_W, inp)
+        let nh: f32 = h + 0.6 * turn + 0.1 * (rng_unit(&st) - 0.5)
+        let v: f32 = thrust * cr[i].vmax
+        let nx: f32 = wrap_x(x + v * cosf(nh))
+        let ny: f32 = wrap_y(y + v * sinf(nh))
+        let mut moved: f32 = 0.0
+        if passable(terrain, cell_index(nx, ny), open) {
+            cr[i].px = nx
+            cr[i].py = ny
+            moved = v
+            cr[i].hd = nh
+        } else {
+            cr[i].hd = nh + 3.14159265
+        }
+        let row: i32 = (cr[i].py as i32) & (WORLD_H - 1)
+        let dt: f32 = temp_row[row] - cr[i].topt
+        let cost: f32 = L_UPKEEP * cr[i].upkeep + L_MOVE_COST * cr[i].mass * moved * moved
+                      + THERMAL_L * cr[i].mass * dt * dt
+        cr[i].en = cr[i].en - cost
+        if rng_unit(&st) < L_MORTALITY {
+            cr[i].en = -1.0
+        }
+        cr[i].age = cr[i].age + 1
+        if cr[i].cd > 0 { cr[i].cd = cr[i].cd - 1 }
+    }
+}
+
+# Grazing, then predation, cell by cell. Every interaction is between
+# organisms standing in the same cell, so rows run in parallel.
+export function life_feed(l: ptr<Life>) -> void {
+    let cr: ptr<Creature> = l.cr
+    let food: ptr<f32> = l.env.food
+    let start: ptr<i32> = l.start
+    let order: ptr<i32> = l.order
+    let tick: u32 = l.tick
+    let kills: ptr<i32> = l.fill
+    parallel for y in 0 to WORLD_H {
+        kills[y] = 0
+        for x in 0 to WORLD_W {
+            let c: i32 = y * WORLD_W + x
+            let s0: i32 = start[c]
+            let s1: i32 = start[c + 1]
+            if s1 > s0 {
+                let mut f: f32 = food[c]
+                for k in s0 to s1 {
+                    let i: i32 = order[k]
+                    if cr[i].en > 0.0 and cr[i].mouths > 0 {
+                        let mut take: f32 = cr[i].bite
+                        let room: f32 = cr[i].ecap - cr[i].en
+                        if take > room { take = room }
+                        if take > f { take = f }
+                        if take > 0.0 {
+                            cr[i].en = cr[i].en + take
+                            f = f - take
+                        }
+                    }
+                }
+                food[c] = f
+                for k in s0 to s1 {
+                    let i: i32 = order[k]
+                    if cr[i].en > 0.0 and cr[i].attack > 0.0 and cr[i].mouths > 0 {
+                        let mut st: u32 = rng_stream(cr[i].seed, tick, 3 as u32)
+                        let mut victim: i32 = -1
+                        for q in s0 to s1 {
+                            let j: i32 = order[q]
+                            if j != i and victim < 0 and cr[j].en > 0.0 and cr[j].defense < cr[i].attack {
+                                victim = j
+                            }
+                        }
+                        cr[i].en = cr[i].en - L_ATTACK_COST
+                        if victim >= 0 {
+                            let a: f32 = cr[i].attack
+                            let d: f32 = cr[victim].defense
+                            if rng_unit(&st) < a / (a + d + 1.0) {
+                                let mut dmg: f32 = 0.4 * a
+                                if dmg > cr[victim].en { dmg = cr[victim].en }
+                                cr[victim].en = cr[victim].en - dmg
+                                let mut gain: f32 = L_MEAT_EFF * dmg
+                                if cr[victim].en <= 0.0 {
+                                    gain = gain + 0.5 * cr[victim].mass
+                                    cr[victim].en = -2.0
+                                    cr[i].kills = cr[i].kills + 1
+                                    kills[y] = kills[y] + 1
+                                }
+                                cr[i].en = cr[i].en + gain
+                                if cr[i].en > cr[i].ecap { cr[i].en = cr[i].ecap }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut total: i32 = 0
+    for y in 0 to WORLD_H {
+        total = total + kills[y]
+    }
+    l.kills = l.kills + total
+}
+
+function l_can_mate(c: ptr<Creature>, j: i32) -> bool {
+    return c[j].age >= L_MATURE and c[j].cd == 0 and c[j].en > 0.5 * c[j].thr
+}
+
+export function life_reproduce(l: ptr<Life>) -> i32 {
+    let n: i32 = l.n
+    let cr: ptr<Creature> = l.cr
+    let mut total: i32 = n
+    let mut i: i32 = 0
+    while i < n and total < LIFE_MAX {
+        if cr[i].age >= L_MATURE and cr[i].cd == 0 and cr[i].en >= cr[i].thr {
+            let mut st: u32 = rng_stream(cr[i].seed, l.tick, 2 as u32)
+            let cx: i32 = cr[i].px as i32
+            let cy: i32 = cr[i].py as i32
+            let mut mate: i32 = -1
+            let mut seen: i32 = 0
+            let mut refused: i32 = 0
+            for kk in 0 to 9 {
+                let c: i32 = ((cy + kk / 3 - 1) & (WORLD_H - 1)) * WORLD_W + ((cx + kk % 3 - 1) & (WORLD_W - 1))
+                for s in l.start[c] to l.start[c + 1] {
+                    let j: i32 = l.order[s]
+                    if j != i and l_can_mate(cr, j) {
+                        if l_dev_distance(l.dev, i, j) <= L_MATE_DISTANCE {
+                            seen = seen + 1
+                            if rng_below(&st, seen) == 0 { mate = j }
+                        } else {
+                            refused = refused + 1
+                        }
+                    }
+                }
+            }
+            if mate < 0 and refused > 0 {
+                l.rejected = l.rejected + 1
+            }
+            if mate >= 0 {
+                let c: i32 = total
+                l_cross(l.genome, i, mate, c, &st, &l.arch, l.lambda, l.p0)
+                express(cr, l.genome, l.dev, l.body, l.brain, c)
+                let pay_i: f32 = 0.55 * cr[i].thr
+                let pay_j: f32 = 0.15 * cr[mate].thr
+                cr[i].en = cr[i].en - pay_i
+                cr[mate].en = cr[mate].en - pay_j
+                cr[i].cd = L_COOLDOWN
+                cr[mate].cd = L_COOLDOWN
+                # Building the body costs energy in proportion to its mass.
+                let e: f32 = 0.8 * (pay_i + pay_j) - 0.08 * cr[c].mass
+                if e > 0.0 {
+                    cr[c].px = wrap_x(cr[i].px + rng_unit(&st) - 0.5)
+                    cr[c].py = wrap_y(cr[i].py + rng_unit(&st) - 0.5)
+                    if !passable(l.env.terrain, cell_index(cr[c].px, cr[c].py), l.env.passes_open) {
+                        cr[c].px = cr[i].px
+                        cr[c].py = cr[i].py
+                    }
+                    cr[c].hd = rng_unit(&st) * 6.2831853
+                    cr[c].en = e
+                    if cr[c].en > cr[c].ecap { cr[c].en = cr[c].ecap }
+                    cr[c].age = 0
+                    cr[c].cd = 0
+                    cr[c].kills = 0
+                    let mut gn: i32 = cr[i].gen
+                    if cr[mate].gen > gn { gn = cr[mate].gen }
+                    cr[c].gen = gn + 1
+                    cr[c].seed = l_fresh_seed(l)
+                    total = total + 1
+                    l.births = l.births + 1
+                }
+            }
+        }
+        i = i + 1
+    }
+    return total
+}
+
+# Drop the dead: serial destinations, parallel scatter into the second
+# buffers, then swap.
+export function life_compact(l: ptr<Life>, total: i32) -> void {
+    let mut out: i32 = 0
+    for i in 0 to total {
+        let c: Creature = l.cr[i]
+        if c.en <= 0.0 or c.age >= L_MAX_AGE {
+            l.dst[i] = -1
+            if c.en > -1.5 { l.starved = l.starved + 1 }
+        } else {
+            l.dst[i] = out
+            out = out + 1
+        }
+    }
+    let cr: ptr<Creature> = l.cr
+    let cr2: ptr<Creature> = l.cr2
+    let g: ptr<u32> = l.genome
+    let g2: ptr<u32> = l.genome2
+    let b: ptr<u8> = l.body
+    let b2: ptr<u8> = l.body2
+    let dv: ptr<u32> = l.dev
+    let dv2: ptr<u32> = l.dev2
+    let br: ptr<f32> = l.brain
+    let br2: ptr<f32> = l.brain2
+    let dst: ptr<i32> = l.dst
+    parallel for i in 0 to total {
+        let d: i32 = dst[i]
+        if d >= 0 {
+            cr2[d] = cr[i]
+            for k in 0 to L_WORDS { g2[d * L_WORDS + k] = g[i * L_WORDS + k] }
+            for k in 0 to BODY_CELLS { b2[d * BODY_CELLS + k] = b[i * BODY_CELLS + k] }
+            for k in 0 to 4 { dv2[d * 4 + k] = dv[i * 4 + k] }
+            for k in 0 to BRAIN_W { br2[d * BRAIN_W + k] = br[i * BRAIN_W + k] }
+        }
+    }
+    l.cr = cr2
+    l.cr2 = cr
+    l.genome = g2
+    l.genome2 = g
+    l.body = b2
+    l.body2 = b
+    l.dev = dv2
+    l.dev2 = dv
+    l.brain = br2
+    l.brain2 = br
+    l.n = out
+}
+
+export function life_step(l: ptr<Life>) -> void {
+    l.births = 0
+    l.kills = 0
+    l.starved = 0
+    l.rejected = 0
+    world_climate_step(&l.env)
+    world_update_temperature(&l.env)
+    world_regrow(&l.env)
+    life_index(l)
+    life_act(l)
+    life_index(l)
+    life_feed(l)
+    let total: i32 = life_reproduce(l)
+    life_compact(l, total)
+    l.tick = l.tick + (1 as u32)
+}
+
+export function life_init(seed: u32) -> Life {
+    let mut l: Life = life_new(seed)
+    life_found(&l)
+    return l
+}
+
+# Order-sensitive hash of the population, for determinism checks.
+export function life_hash(l: ptr<Life>) -> u32 {
+    let mut h: u32 = rng_hash(l.n as u32)
+    for i in 0 to l.n {
+        h = rng_hash(h ^ l.cr[i].seed)
+        h = rng_hash(h ^ ((l.cr[i].px * 4096.0) as u32))
+        h = rng_hash(h ^ ((l.cr[i].en * 65536.0) as u32))
+        for k in 0 to L_WORDS {
+            h = rng_hash(h ^ l.genome[i * L_WORDS + k])
+        }
+    }
+    return h
+}

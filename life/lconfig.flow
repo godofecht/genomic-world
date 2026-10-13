@@ -1,0 +1,59 @@
+# Constants for the life world: embodied organisms with developed bodies.
+
+# Capacity. Bodies are drawn individually, so the population is smaller
+# than the genomic world's.
+const LIFE_MAX: i32 = 32768
+
+# Genome: eight chromosomes of 32 loci, diploid. Words 0-7 maternal,
+# 8-15 paternal; chromosome c is (word c, word c + 8).
+const L_CHROMS: i32 = 8
+const L_WORDS: i32 = 16
+const L_LOCI: i32 = 256
+
+# Body: a 7 x 7 lattice grown from a core cell at its centre.
+const BODY: i32 = 7
+const BODY_CELLS: i32 = 49
+const DEV_STEPS: i32 = 4
+
+# Cell types. 0 is empty.
+const CELL_CORE: i32 = 1
+const CELL_MOUTH: i32 = 2
+const CELL_MOTOR: i32 = 3
+const CELL_EYE: i32 = 4
+const CELL_ARMOR: i32 = 5
+const CELL_STORE: i32 = 6
+const CELL_SPIKE: i32 = 7
+const CELL_TYPES: i32 = 8
+
+# Brain: 7 inputs, 2 outputs, one 6-bit additive weight per pair.
+const BRAIN_IN: i32 = 7
+const BRAIN_OUT: i32 = 2
+const BRAIN_W: i32 = 14
+
+# Life history and energy.
+const L_MATURE: i32 = 25
+const L_COOLDOWN: i32 = 20
+const L_MAX_AGE: i32 = 900
+const L_MORTALITY: f32 = 0.002
+const L_UPKEEP: f32 = 0.004
+const L_MOVE_COST: f32 = 0.0016
+const THERMAL_L: f32 = 0.03
+const L_ATTACK_COST: f32 = 0.004
+const L_MEAT_EFF: f32 = 0.6
+
+# Mating needs developmental genotypes within this many bits of each other.
+const L_MATE_DISTANCE: i32 = 10
+
+# Mutation per locus per gamete, crossovers per chromosome.
+const L_MU: f32 = 0.001
+const L_MAP: f32 = 1.0
+
+# Census of body plans.
+const PLAN_SLOTS: i32 = 8192
+const BESTIARY: i32 = 8
+
+# Fertility of the land relative to the genomic world.
+const L_FERTILITY: f32 = 1.0
+
+# Founders.
+const L_FOUNDERS: i32 = 3000

@@ -1,0 +1,78 @@
+# Development: a body grows from one core cell.
+#
+# The body is a 7 x 7 lattice with the core at the centre and the front
+# facing +x. For DEV_STEPS rounds, every cell in the upper half (rows 0-3)
+# reads the expressed gene for its own type and each direction (E, N, W, S).
+# If the gene's grow bit is set and the neighbour in that direction is empty
+# and still in the upper half, the neighbour becomes the gene's daughter
+# type. Each round works from a snapshot, so growth spreads one cell per
+# round. After each round the upper half is mirrored onto the lower half, so
+# every body is bilaterally symmetric, as most animals are.
+#
+# Body statistics follow from the cell counts: mass, upkeep, top speed,
+# bite, attack, defence, energy capacity and sensing range.
+
+import .lconfig
+
+export function dev_gene(dev: ptr<u32>, db: i32, cell_type: i32, dir: i32) -> i32 {
+    let k: i32 = (cell_type - 1) * 4 + dir
+    return ((dev[db + (k >> 3)] >> (((k & 7) * 4) as u32)) & (15 as u32)) as i32
+}
+
+export function develop(dev: ptr<u32>, db: i32, body: ptr<u8>, bb: i32) -> void {
+    let snap: array<u8, 49> = [0, 0, 0, 0]
+    for k in 0 to BODY_CELLS {
+        body[bb + k] = 0 as u8
+    }
+    body[bb + 3 * BODY + 3] = CELL_CORE as u8
+    let dx: array<i32, 4> = [1, 0, -1, 0]
+    let dy: array<i32, 4> = [0, -1, 0, 1]
+    for step in 0 to DEV_STEPS {
+        for k in 0 to BODY_CELLS {
+            snap[k] = body[bb + k]
+        }
+        for y in 0 to 4 {
+            for x in 0 to BODY {
+                let t: i32 = snap[y * BODY + x] as i32
+                if t != 0 {
+                    for d in 0 to 4 {
+                        let gene: i32 = dev_gene(dev, db, t, d)
+                        if (gene & 8) != 0 {
+                            let nx: i32 = x + dx[d]
+                            let ny: i32 = y + dy[d]
+                            if nx >= 0 and nx < BODY and ny >= 0 and ny <= 3 {
+                                if body[bb + ny * BODY + nx] == (0 as u8) {
+                                    let mut child: i32 = gene & 7
+                                    if child == 0 { child = CELL_CORE }
+                                    body[bb + ny * BODY + nx] = child as u8
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for y in 0 to 3 {
+            for x in 0 to BODY {
+                body[bb + (6 - y) * BODY + x] = body[bb + y * BODY + x]
+            }
+        }
+    }
+}
+
+export function count_cells(body: ptr<u8>, bb: i32, cell_type: i32) -> i32 {
+    let mut n: i32 = 0
+    for k in 0 to BODY_CELLS {
+        if (body[bb + k] as i32) == cell_type { n = n + 1 }
+    }
+    return n
+}
+
+# FNV-1a over the lattice: the body plan's identity in the census.
+export function body_hash(body: ptr<u8>, bb: i32) -> u32 {
+    let mut h: u32 = 2166136261 as u32
+    for k in 0 to BODY_CELLS {
+        h = (h ^ (body[bb + k] as u32)) * (16777619 as u32)
+    }
+    return h
+}

@@ -1,0 +1,132 @@
+# Genome of a life-world organism: 256 loci on eight chromosomes, diploid.
+#
+#   loci   0-111  developmental genes: 28 genes of 4 bits, one per
+#                 (cell type 1-7, direction E N W S). Bit 3: grow. Bits
+#                 0-2: daughter cell type (0 means core).
+#   loci 112-127  thermal optimum, 16 additive loci
+#   loci 128-211  brain: 14 weights of 6 bits, additive across homologs
+#   loci 212-223  breeding threshold, 12 additive loci
+#   loci 224-253  neutral markers, three blocks of ten read as colour
+#   loci 254-255  neutral
+#
+# Developmental genes follow a dominance series, as at the C locus for rabbit
+# coat colour: of the two alleles, the one with the larger 4-bit value is
+# expressed. A growing allele is therefore dominant over a silent one. The
+# rule is symmetric in the two homologs.
+#
+# Meiosis reuses gen_meiosis_word from the genomic world, chromosome by
+# chromosome, so recombination is Haldane's model there too.
+
+import gsim.config
+import gsim.rng
+import gsim.bits
+import gsim.genome
+import .lconfig
+
+const LOC_THERMAL: i32 = 112
+const LOC_BRAIN: i32 = 128
+const LOC_THR: i32 = 212
+const LOC_MARK: i32 = 224
+const DEV_GENES: i32 = 28
+
+# n bits (n <= 16) starting at locus pos of one homolog set starting at word
+# base. Handles a field that straddles two words.
+export function bits_at(g: ptr<u32>, base: i32, pos: i32, n: i32) -> u32 {
+    let w: i32 = pos >> 5
+    let off: u32 = (pos & 31) as u32
+    let mut v: u32 = g[base + w] >> off
+    let have: i32 = 32 - (pos & 31)
+    if have < n {
+        v = v | (g[base + w + 1] << (have as u32))
+    }
+    return v & low_mask(n)
+}
+
+export function l_dosage(g: ptr<u32>, base: i32, first: i32, count: i32) -> i32 {
+    let mut d: i32 = 0
+    for k in 0 to count {
+        d = d + (bits_at(g, base, first + k, 1) + bits_at(g, base + L_CHROMS, first + k, 1)) as i32
+    }
+    return d
+}
+
+# Expressed developmental genes, packed eight per word into out[ob..ob+4].
+export function l_dev_express(g: ptr<u32>, base: i32, out: ptr<u32>, ob: i32) -> void {
+    for w in 0 to 4 {
+        out[ob + w] = 0 as u32
+    }
+    for k in 0 to DEV_GENES {
+        let a: u32 = bits_at(g, base, k * 4, 4)
+        let b: u32 = bits_at(g, base + L_CHROMS, k * 4, 4)
+        let mut e: u32 = a
+        if b > a { e = b }
+        out[ob + (k >> 3)] = out[ob + (k >> 3)] | (e << (((k & 7) * 4) as u32))
+    }
+}
+
+# Bits that differ between two expressed developmental genotypes.
+export function l_dev_distance(dev: ptr<u32>, ia: i32, ib: i32) -> i32 {
+    let mut d: i32 = 0
+    for w in 0 to 4 {
+        d = d + popcount32(dev[ia * 4 + w] ^ dev[ib * 4 + w])
+    }
+    return d
+}
+
+# Brain weight k in [-3.94, 3.94]: the two homologs' 6-bit values summed.
+export function l_weight(g: ptr<u32>, base: i32, k: i32) -> f32 {
+    let a: u32 = bits_at(g, base, LOC_BRAIN + k * 6, 6)
+    let b: u32 = bits_at(g, base + L_CHROMS, LOC_BRAIN + k * 6, 6)
+    return (((a + b) as f32) - 63.0) / 16.0
+}
+
+# One gamete of 8 words from parent src[sb..sb+16] into dst[db..db+8].
+export function l_gamete(src: ptr<u32>, sb: i32, dst: ptr<u32>, db: i32,
+                         st: ptr<u32>, a: ptr<Arch>, lambda: f32, p0: f32) -> void {
+    for c in 0 to L_CHROMS {
+        dst[db + c] = gen_meiosis_word(src[sb + c], src[sb + c + L_CHROMS], st, a)
+    }
+    let muts: i32 = gen_poisson(st, lambda, p0)
+    for m in 0 to muts {
+        let locus: i32 = rng_below(st, L_LOCI)
+        let w: i32 = locus >> 5
+        dst[db + w] = dst[db + w] ^ ((1 as u32) << ((locus & 31) as u32))
+    }
+}
+
+export function l_cross(g: ptr<u32>, mom: i32, dad: i32, child: i32,
+                        st: ptr<u32>, a: ptr<Arch>, lambda: f32, p0: f32) -> void {
+    l_gamete(g, mom * L_WORDS, g, child * L_WORDS, st, a, lambda, p0)
+    l_gamete(g, dad * L_WORDS, g, child * L_WORDS + L_CHROMS, st, a, lambda, p0)
+}
+
+# Write a 4-bit developmental gene on both homologs.
+export function l_set_gene(g: ptr<u32>, base: i32, cell_type: i32, dir: i32, value: u32) -> void {
+    let k: i32 = (cell_type - 1) * 4 + dir
+    let pos: i32 = k * 4
+    let w: i32 = pos >> 5
+    let off: u32 = (pos & 31) as u32
+    let clear: u32 = invert32(low_mask(4) << off)
+    g[base + w] = (g[base + w] & clear) | (value << off)
+    g[base + w + L_CHROMS] = (g[base + w + L_CHROMS] & clear) | (value << off)
+}
+
+# Write brain weight k on both homologs as close to w as 6-bit values allow.
+export function l_set_weight(g: ptr<u32>, base: i32, k: i32, w: f32) -> void {
+    let mut v: i32 = ((w * 16.0 + 63.0) * 0.5 + 0.5) as i32
+    if v < 0 { v = 0 }
+    if v > 63 { v = 63 }
+    for h in 0 to 2 {
+        let hb: i32 = base + h * L_CHROMS
+        for b in 0 to 6 {
+            let pos: i32 = LOC_BRAIN + k * 6 + b
+            let word: i32 = hb + (pos >> 5)
+            let bit: u32 = (1 as u32) << ((pos & 31) as u32)
+            if ((v >> b) & 1) == 1 {
+                g[word] = g[word] | bit
+            } else {
+                g[word] = g[word] & invert32(bit)
+            }
+        }
+    }
+}

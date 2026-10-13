@@ -6,5 +6,6 @@ entry = "genomic_world.flow"
 
 [paths]
 gsim = "sim"
+glife = "life"
 
 [dependencies]

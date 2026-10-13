@@ -1,0 +1,48 @@
+# Headless life world: population, body plans and throughput.
+#
+# Run: ./run.sh life-bench
+
+import "stdlib/experiment.flow"
+import gsim.params
+import glife.lconfig
+import glife.creature
+import glife.lworld
+import glife.census
+
+extern {
+    function getenv(name: string) -> ptr<u8>
+    function atoi(s: ptr<u8>) -> i32
+}
+
+function main() -> i32 {
+    let v: ptr<u8> = getenv("GW_TICKS")
+    let mut ticks: i32 = 6000
+    if v != null { ticks = atoi(v) }
+    let mut l: Life = life_init(params_seed(20261014 as u32))
+    let mut cs: Census = census_new()
+    printf(" tick     n  births  kills  starved  rejected  plans  species  cells  eyes  speed  armor  predators  max gen  ms/tick\n")
+    let t0: i64 = xp_now_ns()
+    let mut tl: i64 = t0
+    let mut agent_ticks: f64 = 0.0
+    for t in 1 to ticks + 1 {
+        agent_ticks = agent_ticks + (l.n as f64)
+        life_step(&l)
+        if t % 500 == 0 {
+            let now: i64 = xp_now_ns()
+            census_take(&cs, l.cr, l.n)
+            printf("%5d %5d %7d %6d %8d %9d %6d %8d %6.2f %5.2f %6.2f %6.2f %10.3f %8d %8.3f\n",
+                   t, l.n, l.births, l.kills, l.starved, l.rejected, cs.plans, cs.morphospecies,
+                   cs.mean_cells as f64, cs.mean_eyes as f64, cs.mean_speed as f64, cs.mean_armor as f64,
+                   cs.predators as f64, cs.max_gen, ((now - tl) as f64) / 1000000.0 / 500.0)
+            tl = xp_now_ns()
+        }
+        if l.n == 0 {
+            printf("extinct at tick %d\n", t)
+            return 1
+        }
+    }
+    let secs: f64 = ((xp_now_ns() - t0) as f64) / 1000000000.0
+    printf("\n%d ticks in %.1f s: %.0f ticks/s, %.2f M organism-ticks/s\n", ticks, secs,
+           (ticks as f64) / secs, agent_ticks / secs / 1000000.0)
+    return 0
+}

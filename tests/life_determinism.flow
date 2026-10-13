@@ -1,0 +1,13 @@
+# Prints a hash of the life world after 600 ticks. run.sh test runs this at
+# one thread and at eight and requires the same hash.
+
+import glife.lworld
+
+function main() -> i32 {
+    let mut l: Life = life_init(777 as u32)
+    for t in 0 to 600 {
+        life_step(&l)
+    }
+    printf("hash %u n %d\n", life_hash(&l), l.n)
+    return 0
+}

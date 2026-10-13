@@ -1,0 +1,91 @@
+# LIFE WORLD: organisms with bodies grown from their genomes.
+#
+# Each organism's body develops from a single core cell on a 7 x 7 lattice,
+# following genes that say, for each cell type and direction, whether to
+# grow and what to grow. Bodies are made of mouths, motors, eyes, armour,
+# stores and spikes, and everything about the organism follows from them:
+# what it can eat, how fast it moves, how far it sees, how hard it is to
+# kill, how much it costs to run. A one-layer brain, also genetic, turns
+# what the eyes see into turning and thrust.
+#
+# Founders are all the same three-cell grazer. Predators, armour, eyes and
+# new body plans have to evolve. Mating needs a similar developmental
+# genotype, so body plans that drift apart stop interbreeding.
+#
+# Run: ./run.sh life
+
+import "stdlib/gfx.flow"
+import "stdlib/keys.flow"
+import gsim.config
+import gsim.canvas
+import gsim.params
+import glife.lconfig
+import glife.lworld
+import glife.census
+import glife.lrender
+
+const CENSUS_EVERY: i32 = 8
+
+struct LKeys {
+    held: array<bool, 8>
+}
+
+function tap(g: Gfx, k: ptr<LKeys>, slot: i32, code: i32) -> bool {
+    let down: bool = gfx_key_down(g, code)
+    let was: bool = k.held[slot]
+    k.held[slot] = down
+    return down and !was
+}
+
+function main() -> i32 {
+    let mut seed: u32 = params_seed(20261014 as u32)
+    let mut l: Life = life_init(seed)
+    let mut cs: Census = census_new()
+    let cv: Canvas = canvas_new(L_WIN_W, L_WIN_H)
+    let mut ui: LifeUi = LifeUi { steps: 4, paused: false, zoom: false, zx: 96, zy: 96 }
+    let mut keys: LKeys = LKeys { held: [false, false, false, false, false, false, false, false] }
+    census_take(&cs, l.cr, l.n)
+
+    let g: Gfx = gfx_open(L_WIN_W, L_WIN_H, "Life World - Flow")
+    let mut frame: i32 = 0
+    while gfx_frame_pump(g) {
+        if tap(g, &keys, 0, KEY_P) { ui.paused = !ui.paused }
+        if tap(g, &keys, 1, KEY_B) { l.env.passes_open = !l.env.passes_open }
+        if tap(g, &keys, 2, KEY_W) {
+            if l.env.climate.target < 0.15 { l.env.warming_dir = 1 } else { l.env.warming_dir = -1 }
+        }
+        if tap(g, &keys, 3, KEY_RBRACKET) and ui.steps < 64 { ui.steps = ui.steps * 2 }
+        if tap(g, &keys, 4, KEY_LBRACKET) and ui.steps > 1 { ui.steps = ui.steps / 2 }
+        if tap(g, &keys, 6, KEY_Z) { ui.zoom = !ui.zoom }
+        if ui.zoom {
+            if gfx_key_down(g, KEY_LEFT) { ui.zx = (ui.zx + WORLD_W - 1) % WORLD_W }
+            if gfx_key_down(g, KEY_RIGHT) { ui.zx = (ui.zx + 1) % WORLD_W }
+            if gfx_key_down(g, KEY_UP) { ui.zy = (ui.zy + WORLD_H - 1) % WORLD_H }
+            if gfx_key_down(g, KEY_DOWN) { ui.zy = (ui.zy + 1) % WORLD_H }
+        }
+        if tap(g, &keys, 5, KEY_R) {
+            seed = seed * (1664525 as u32) + (1013904223 as u32)
+            l = life_init(seed)
+            cs = census_new()
+        }
+        if !ui.paused and l.n > 0 {
+            for k in 0 to ui.steps {
+                life_step(&l)
+                if (l.tick % (64 as u32)) == (0 as u32) {
+                    census_take(&cs, l.cr, l.n)
+                    census_record(&cs, l.n)
+                }
+            }
+        }
+        if frame % CENSUS_EVERY == 0 {
+            census_take(&cs, l.cr, l.n)
+        }
+        life_render(cv, &l, &cs, ui)
+        gfx_blit_rgb(g, 0, 0, L_WIN_W, L_WIN_H, cv.px)
+        gfx_present(g)
+        gfx_wait_frame(g, 60)
+        frame = frame + 1
+    }
+    gfx_close(g)
+    return 0
+}

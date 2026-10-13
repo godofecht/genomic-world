@@ -8,6 +8,9 @@
 #                       determinism check
 #   ./run.sh validate   genetic engine against population-genetic theory
 #   ./run.sh export     run 3000 ticks, write a VCF sample to out/
+#   ./run.sh life       the life world: organisms with developed bodies
+#   ./run.sh life-bench headless life world: population, body plans
+#   ./run.sh life-record N  headless life world GIF to out/life.gif
 #   ./run.sh equilibrium  calibrate, solve the attractors, compare cold and
 #                       warm starts
 #
@@ -58,6 +61,15 @@ case "${1:-gfx}" in
             echo "FAIL: state differs between thread counts"
             fail=1
         fi
+        echo "== life world determinism across thread counts"
+        l1=$(cd tests && OMP_NUM_THREADS=1 flow run life_determinism.flow 2>&1 | grep "^hash" || true)
+        l8=$(cd tests && OMP_NUM_THREADS=8 flow run life_determinism.flow 2>&1 | grep "^hash" || true)
+        echo "  1 thread : $l1"
+        echo "  8 threads: $l8"
+        if [ -z "$l1" ] || [ "$l1" != "$l8" ]; then
+            echo "FAIL: life world differs between thread counts"
+            fail=1
+        fi
         echo "== validation against theory"
         mkdir -p out
         if ! flow run validate.flow 2>&1 | quiet; then
@@ -69,6 +81,17 @@ case "${1:-gfx}" in
         mkdir -p out
         flow run validate.flow 2>&1 | quiet
         ;;
+    life)
+        flow gfx life_world.flow
+        ;;
+    life-bench)
+        flow run life_bench.flow 2>&1 | quiet
+        ;;
+    life-record)
+        mkdir -p out
+        flow record life_world.flow --frames "${2:-300}" --stride "${3:-1}" \
+            --out out/life_frames --gif out/life.gif
+        ;;
     equilibrium)
         mkdir -p out
         flow run equilibrium.flow 2>&1 | quiet
@@ -78,7 +101,7 @@ case "${1:-gfx}" in
         flow run export_run.flow 2>&1 | quiet
         ;;
     *)
-        echo "usage: $0 [gfx|record N [stride]|bench|test|validate|export|equilibrium]" >&2
+        echo "usage: $0 [gfx|record N [stride]|bench|test|validate|export|equilibrium|life|life-bench|life-record N]" >&2
         exit 2
         ;;
 esac

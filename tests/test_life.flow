@@ -1,0 +1,116 @@
+# The life world's genetics, development and bookkeeping.
+#
+#   1  the founding genotype develops into mouth, core, motor along the axis
+#   2  development is bilaterally symmetric for random genotypes
+#   3  swapping the two homologs leaves the body unchanged (dominance series
+#      is symmetric)
+#   4  gametes carry only parental alleles when mutation is off
+#   5  brain weights decode to what was written
+#   6  a short run keeps every organism alive in the record table with
+#      positive energy and a body that has at least one cell
+
+import "stdlib/memory.flow"
+import gsim.config
+import gsim.rng
+import gsim.genome
+import glife.lconfig
+import glife.lgenome
+import glife.develop
+import glife.creature
+import glife.lworld
+
+extern {
+    function fabs(x: f64) -> f64
+}
+
+function main() -> i32 {
+    let mut st: u32 = rng_stream(5 as u32, 1 as u32, 1 as u32)
+    let n: i32 = 4
+    let g: ptr<u32> = alloc_zeroed((n * L_WORDS * 4) as i64) as ptr<u32>
+    let dev: ptr<u32> = alloc_zeroed((n * 16) as i64) as ptr<u32>
+    let body: ptr<u8> = alloc_zeroed((n * BODY_CELLS) as i64) as ptr<u8>
+    let brain: ptr<f32> = alloc_f32((n * BRAIN_W) as i64)
+    let cr: ptr<Creature> = alloc_bytes((n as i64) * CR_BYTES) as ptr<Creature>
+
+    luca(g, 0, &st)
+    express(cr, g, dev, body, brain, 0)
+    let cells: i32 = cr[0].cells
+    let mid: i32 = 3 * BODY
+    if cells != 3 or (body[mid + 4] as i32) != CELL_MOUTH or (body[mid + 3] as i32) != CELL_CORE
+       or (body[mid + 2] as i32) != CELL_MOTOR {
+        printf("FAIL 1 founding body has %d cells\n", cells)
+        return 1
+    }
+    if fabs((brain[0] as f64) - 2.5) > 0.07 or fabs((brain[BRAIN_IN + 6] as f64) - 1.0) > 0.07 {
+        printf("FAIL 5 brain weights %f %f\n", brain[0] as f64, brain[BRAIN_IN + 6] as f64)
+        return 5
+    }
+
+    let mut big: i32 = 0
+    for trial in 0 to 2000 {
+        for w in 0 to L_WORDS {
+            g[L_WORDS + w] = rng_word(&st)
+        }
+        express(cr, g, dev, body, brain, 1)
+        if cr[1].cells > 10 { big = big + 1 }
+        for y in 0 to BODY {
+            for x in 0 to BODY {
+                if body[BODY_CELLS + y * BODY + x] != body[BODY_CELLS + (6 - y) * BODY + x] {
+                    printf("FAIL 2 asymmetric body\n")
+                    return 2
+                }
+            }
+        }
+        let h1: u32 = cr[1].plan
+        for w in 0 to L_CHROMS {
+            g[2 * L_WORDS + w] = g[L_WORDS + w + L_CHROMS]
+            g[2 * L_WORDS + w + L_CHROMS] = g[L_WORDS + w]
+        }
+        express(cr, g, dev, body, brain, 2)
+        if cr[2].plan != h1 {
+            printf("FAIL 3 homolog swap changed the body\n")
+            return 3
+        }
+    }
+    printf("  2000 random genotypes: all symmetric, homolog-swap invariant, %d with more than 10 cells\n", big)
+
+    let mut a: Arch = arch_new(1 as u32)
+    arch_set_map(&a, 1.0)
+    for trial in 0 to 2000 {
+        for w in 0 to L_WORDS {
+            g[w] = rng_word(&st)
+            g[L_WORDS + w] = rng_word(&st)
+        }
+        l_cross(g, 0, 1, 2, &st, &a, 0.0, 1.0)
+        for c in 0 to L_CHROMS {
+            let m: u32 = g[2 * L_WORDS + c]
+            let p: u32 = g[2 * L_WORDS + c + L_CHROMS]
+            if ((m ^ g[c]) & (m ^ g[c + L_CHROMS])) != (0 as u32) {
+                printf("FAIL 4 maternal gamete allele not in mother\n")
+                return 4
+            }
+            if ((p ^ g[L_WORDS + c]) & (p ^ g[L_WORDS + c + L_CHROMS])) != (0 as u32) {
+                printf("FAIL 4 paternal gamete allele not in father\n")
+                return 4
+            }
+        }
+    }
+
+    let mut l: Life = life_init(424242 as u32)
+    for t in 0 to 300 {
+        life_step(&l)
+        for i in 0 to l.n {
+            if l.cr[i].en <= 0.0 or l.cr[i].cells < 1 {
+                printf("FAIL 6 dead or bodiless organism in slot %d\n", i)
+                return 6
+            }
+        }
+    }
+    printf("  300 ticks: %d organisms\n", l.n)
+    if l.n == 0 {
+        printf("FAIL 6 extinct\n")
+        return 6
+    }
+    printf("OK life\n")
+    return 0
+}
