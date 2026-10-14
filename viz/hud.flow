@@ -214,7 +214,7 @@ export function hud_draw(f: Frame, h: ptr<Hud>, l: ptr<Life>, cs: ptr<Census>, p
         hud_right(f, h, l, cs, preset, look)
         if selected >= 0 { hud_inspector(f, h, l, selected, look) }
     }
-    hud_hint(f, h)
+    if h.show { hud_hint(f, h) }
     if h.toast_t > 0 {
         let w: i32 = text_w(f, h, h.toast, FACE_TEXT, 13.0) + px(h, 28.0)
         let x: i32 = (f.w - w) / 2
@@ -269,8 +269,10 @@ function hud_top(f: Frame, h: ptr<Hud>, l: ptr<Life>, cs: ptr<Census>, preset: i
     let fs: string = num_fix(fps as f64, 0, "", " fps")
     let tm: string = num_fix(h.sim_ms as f64, 1, "sim ", " ms")
     let td: string = num_fix(h.draw_ms as f64, 1, "draw ", " ms")
-    let s4: i32 = text(f, h, x + w - text_w(f, h, tm, FACE_TEXT, 10.5) - px(h, 16.0), y + px(h, 56.0), tm, FACE_TEXT, 10.5, FAINT)
-    let s5: i32 = text(f, h, x + w - text_w(f, h, td, FACE_TEXT, 10.5) - px(h, 16.0), y + px(h, 70.0), td, FACE_TEXT, 10.5, FAINT)
+    if h.draw_ms > 0.0 {
+        let s4: i32 = text(f, h, x + w - text_w(f, h, tm, FACE_TEXT, 10.5) - px(h, 16.0), y + px(h, 56.0), tm, FACE_TEXT, 10.5, FAINT)
+        let s5: i32 = text(f, h, x + w - text_w(f, h, td, FACE_TEXT, 10.5) - px(h, 16.0), y + px(h, 70.0), td, FACE_TEXT, 10.5, FAINT)
+    }
     let s2: i32 = text(f, h, x + w - text_w(f, h, vw, FACE_TEXT, 10.5) - px(h, 16.0), y + px(h, 28.0), vw, FACE_TEXT, 10.5, FAINT)
     let s3: i32 = text(f, h, x + w - text_w(f, h, fs, FACE_TEXT, 10.5) - px(h, 16.0), y + px(h, 42.0), fs, FACE_TEXT, 10.5, FAINT)
 }

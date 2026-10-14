@@ -20,8 +20,10 @@ The GIF is produced by `./run.sh record` and is not committed.
 ./run.sh validate     validation against theory only
 ./run.sh export       run headless, write a VCF sample to out/
 ./run.sh equilibrium  calibrate, solve the attractors, compare cold and warm starts
-./run.sh life         the life world: bodies grown from genomes, in an ocean
-./run.sh life-bench   headless life world: body plans, predators, selection
+./run.sh life         the life world, full screen (Tab picks a world, H lists keys)
+./run.sh life-bench   headless life world: forms, trophic roles, energy, selection
+./run.sh shot         headless renders of the life world (settings in life_shot.flow)
+./run.sh life-video N N frames rendered headless, to out/life.mp4
 ```
 
 Requires Flow 2.0 (`flow` on the PATH) and a C11 compiler. With Homebrew
@@ -251,54 +253,169 @@ per run, about 180 generations):
 
 ## Life world
 
-`./run.sh life` runs a second world on the same genetic engine, in which
-organisms have bodies and live in water.
+`./run.sh life` opens a second world on the same genetic engine, full
+screen at the panel's native resolution. Organisms grow bodies from their
+genomes, sense, decide, eat, fight, mate and die, and their lineages
+evolve. Tab chooses the world and how organisms are built; H lists every
+key.
 
-Development. A body grows from one core cell on a 7 x 7 lattice over four
-rounds. Each of 28 developmental genes says, for one cell type and one
-direction, whether to grow and which cell type to make. Growth is mirrored
-across the midline, so bodies are bilaterally symmetric. Seven cell types:
-core, mouth (grazing), motor (thrust), eye (sensing), armour (defence),
-store (energy capacity) and spike (attack). Everything about the organism
-follows from its body. Developmental genes follow a dominance series (the
-larger allele value is expressed), symmetric in the two homologs.
+### Genome and development
 
-Behaviour. A one-layer brain, 14 additive genetic weights, maps food ahead
-and to each side, the direction of the nearest prey and threat, and its own
-energy to turning and thrust. Eyes on the midline see ahead; paired eyes
-off it see to the sides.
+Each organism is diploid. Its genome has two parts.
 
-Water. A 2D incompressible flow (Stam's stable fluids, 128 x 128, periodic)
-is driven by gyres. The ridges are walls; the flow goes around them and
-through the passes. The pressure Laplacian is the exact composition of the
-divergence and gradient used, wall rules included, so the projection removes
-97 percent or more of the divergence next to walls as well as in open water
-(`tests/test_fluid.flow`, which also checks the linear steady state to 0.01
-percent). Organisms drift with the flow and swim relative to it. Top speed is
-motor thrust over drag, and drag grows with body width, so shape matters.
-Food is carried by the water from upwelling patches.
+- A fixed part: 640 loci per haplotype on twenty chromosomes. Morphology
+  and physiology (size, elongation, lobes, pigment, pattern, flagella,
+  cilia, spines, membrane, chlorophyll, toxin resistance, cytostome,
+  eyespot, lipid, raptorial organelles, developmental rounds), a brain of
+  72 weights, a thermal optimum, a breeding threshold and neutral colour
+  markers. These recombine by the genomic world's meiosis (Haldane's map).
+- A developmental program: a list of cell-identity genes, two words each.
+  A gene says what type of cell an identity is, how long it keeps growing,
+  and for each direction whether it grows a neighbour and which identity
+  that neighbour takes. Programs cross over at most once per meiosis;
+  sometimes the crossover is misaligned by one gene, which duplicates or
+  deletes a gene, as unequal crossing-over does. Point mutations,
+  duplications and deletions add to this. The number of identities, and so
+  of distinct cell kinds and organs, is not fixed.
 
-A shifting fitness landscape. The Ocean evolution model (`life/ocean.flow`)
-cycles current strength with a 6000-tick period and drifts the gyres and
-the upwelling patches. Each census window measures the selection
-differential on swim speed and on body width: the mean of parents minus the
-mean of the living. In the first 29,000 ticks of a default run, selection on
-width rises with the currents (to +0.03) and falls back as they weaken.
-After predators invade, selection on width turns negative (to -0.085).
+A body grows from one cell, round by round, in 2D (four directions) or 3D
+(six), and the upper half is mirrored so every body is bilaterally
+symmetric. A gene that grows its own identity repeats a segment; a timer
+stops it. Only the scratch grid bounds a body (31 cells each way in 2D, 15
+in 3D); in tests random programs grow bodies of up to 8,965 cells.
+Energetics bound them long before that.
 
-Ecology. Predators need a spike and a mouth and strike within the 3 x 3
-neighbourhood. Spikes cut grazing efficiency, so predators depend on prey.
-Mating needs developmental genotypes within 10 bits of each other, so body
-plans that drift apart stop interbreeding.
+Of two alleles at a program gene, each field takes the larger value
+(growing is dominant over not growing). Mates must have developmental
+signatures within 10 bits of each other, so forms that diverge stop
+interbreeding.
 
-A default run (seed 20261014, 40,000 ticks, about 580 generations, 46 s)
-shows long stasis: a three-cell grazer dominates for about 29,000 ticks.
-Then predators invade, body plans go from about 25 to 82, mean body size
-from 3.0 to 4.9 cells, and predators settle at 10 to 20 percent alongside
-armoured prey. In the version without water, eyes evolved within 200
-generations under predation; in the ocean they had not by 580.
+### Three ways to build an organism
 
-Both worlds give the same state hash on 1 and 8 threads (`run.sh test`).
+- Body plan: cells of eight types do everything. Mouths graze, motors
+  swim, eyes see (ahead on the midline, to the sides off it), armour and
+  spikes fight, stores hold energy, photosynthetic cells make it from
+  light. Each cell type has a fixed look.
+- Morphology: one cell, built as a protist is. Size and shape set mass and
+  drag; flagella and cilia swim; a cytostome grazes; raptorial organelles
+  hunt, as Didinium's do; spines and a thick membrane defend; chlorophyll
+  photosynthesises and greens the cell; an eyespot sees, as Euglena's
+  stigma does; lipid stores energy. The cell is drawn from the same genes:
+  outline, nucleus, chloroplasts, droplets, beating flagella, cilia in
+  metachronal waves, spines.
+- Combined: the multicellular body of the first mode, with each cell made
+  better or worse at its job (factor 0.5 to 1.5) by the morphological
+  genes, at a running cost, and sized and tinted by them.
+
+Bodies can be 2D or 3D in any multicellular mode. 3D bodies swim in the
+same plane; their frontal area sets their drag.
+
+### Behaviour
+
+A brain with ten inputs, four hidden neurons and two outputs. Inputs: food
+ahead and to each side, the nearest prey and threat, the nearest possible
+mate, its own energy, the light gradient along its heading, the current
+across its body (a lateral line), and a bias. Each hidden neuron feeds
+back on itself, so it can hold a value over time. Outputs are turning and
+thrust. All 72 weights are genetic. The founders' hidden layer is silent;
+anything it does has evolved.
+
+### Ecology
+
+- Grazing on algae (the food field), which regrows toward the water's
+  fertility.
+- Photosynthesis: light from the sun or a lamp, shared among the
+  photosynthetic cells in a world cell beyond six of them, and drawing on
+  the cell's nutrient, so autotrophs compete with the algae and each
+  other.
+- Detritus: every death leaves its biomass where it fell. Mouths scavenge
+  it; bacteria (implicit) return it to the water as nutrient.
+- Predation: attack against defence, within a reach that grows with body
+  size. Spikes cut grazing efficiency, so predators depend on prey.
+- Reproduction: sexual in the ocean; in the lab, cells divide, with
+  occasional sex in protist presets, as Paramecium conjugates.
+- Toxin: where there is antibiotic, energy drains unless resistance
+  covers it; resistance costs upkeep.
+
+### Habitats and experiments
+
+| Preset | Setting | After |
+|---|---|---|
+| Open ocean | gyres around ridges and passes, drifting upwelling, day and night, seasons | the original life world |
+| Petri dish | liquid culture under a lamp, gently stirred | |
+| Range expansion | two neutral strains spread from a drop on agar; nutrients diffuse | Hallatschek, Hersen, Ramanathan and Nelson (2007), PNAS 104: 19926 |
+| Predator and prey | a predator and its prey in a small dish | Gause (1934), The Struggle for Existence |
+| Predator and prey with a refuge | sediment at one side where prey cannot be caught | Gause (1934) |
+| MEGA-plate | a long agar plate, antibiotic in bands rising to the middle | Baym, Lieberman, Chase, Gross and Kishony (2016), Science 353: 1147 |
+| Phototaxis | a slide lit from one end, poor medium, green swimmers with eyespots | |
+| Serial transfer | a tenth moves to fresh medium every 600 ticks | Lenski, Rose, Simpson and Tadler (1991), American Naturalist 138: 1315 |
+
+These are simplified versions. What runs of them show (seed 20261014,
+`./run.sh life-bench` with GW_PRESET):
+
+- Predator and prey: predators reach 33 percent of the population within
+  1,500 ticks, prey crash, prey recover, predators boom to 99 percent of
+  88 survivors at tick 14,000, and both are extinct by 14,838. Gause saw
+  Didinium eat every Paramecium and then starve.
+- With the refuge, prey crowd into the sediment while predators fill the
+  open dish.
+- MEGA-plate: mean resistance rises from 0.003 to 0.29 in 2,000 ticks and
+  levels at about 0.39, the most resistant cell at 0.875, enough for the
+  highest band; the population spreads over the whole plate (9,500 cells).
+- Range expansion: the colony grows outward from the drop to about 3,900
+  cells, and the two neutral strains separate into sectors at its edge.
+  Once the agar is used it settles near 1,500 on what regrows.
+- Serial transfer: a population of about 250 at each transfer holds
+  steady through ten transfers.
+- Phototaxis: green cells gather toward the lamp, holding a mean position
+  of 172 to 185 along the slide (128 would be no bias) from tick 2,000 to
+  11,000.
+- Open ocean: predators appear within 2,000 ticks and settle between 2
+  and 16 percent; mixotrophs come and go; the largest bodies reach 35
+  cells by tick 1,500.
+
+### Viewing
+
+The window opens full screen at the panel's native resolution. The world
+is drawn by a software renderer in Flow (`viz/`) and shown through two Core
+Animation layers (`viz/display.flow`): the world, which on a large panel
+is drawn at half resolution with the water at a quarter and scaled by the
+GPU, and the overlay, drawn at full resolution with CoreText type.
+
+- 2D view: water shaded from the world's fields (algae, detritus,
+  vorticity, caustics, relief lit from the upper left, shore foam), marine
+  snow carried by the currents, organisms, and effects for births, kills
+  and deaths. At night organisms glow.
+- 3D view: the camera orbits; the ground is ray-marched over the terrain
+  height field, so ridges and vessel rims stand up; every body cell is a
+  lit sphere in a depth buffer.
+- Styles: natural colour, bright-field (pale field, translucent cells, as
+  under a microscope), dark-field (black field, cells lit at the edges).
+- The inspector shows a followed organism: portrait, life, energy, its
+  brain with live activity, and its developmental program gene by gene,
+  or in morphology mode its trait values.
+
+| Key | Action |
+|---|---|
+| Tab | Choose a world: preset, mode (M), 2D or 3D bodies (D); Return starts it |
+| Space | Pause |
+| [ and ] | Fewer or more ticks per frame |
+| Wheel, drag | Zoom and pan; in 3D, right-drag turns the camera |
+| Click | Follow an organism; Esc lets go |
+| 3 | 2D or 3D view |
+| V | Natural, bright-field or dark-field |
+| F | Show the flow |
+| G | Quality: fast, balanced or full resolution |
+| I | Hide or show the panels |
+| O | Open or close the ocean's passes |
+| W | Warm or cool the climate |
+| R | Same world, new seed |
+| Z | Whole world in view |
+| Return | Full screen on or off |
+| Esc, Q | Leave full screen; Q quits |
+
+Every life-world run gives the same state hash on 1 and 8 threads, in
+each of the three modes (`run.sh test`).
 
 ## Known gaps
 
@@ -363,7 +480,19 @@ from seed 20261013, about 49k agents at the end, one run each.
 - `tests/test_meanfield.flow`: the cyclic solver, Purge attractors against
   the discrete recursion, local adaptation without dispersal, a flat cline
   under fast dispersal.
+- `tests/test_fluid.flow`: the linear steady state cell by cell, the
+  projection removing at least 90 percent of the divergence, wall cells at
+  rest, and 2000 steps at full forcing staying finite and bounded.
+- `tests/test_life.flow`: the founders' body; random programs grow
+  bilaterally symmetric bodies in 2D and 3D, unchanged by swapping
+  homologs; gametes carry only parental alleles and parental program
+  genes; unequal crossing-over, duplication and deletion change program
+  length both ways; morphological genes act on function; short runs in
+  each mode keep the cell arena packed and every organism alive and
+  embodied.
 - `tests/determinism.flow`: the same state hash at 1 and 8 threads.
+- `tests/life_determinism.flow`: the same, for the ocean in body-plan mode,
+  Gause's dish in morphology mode, and a petri dish of 3D combined bodies.
 - `validate.flow`: the theory checks above.
 
 ## Layout
@@ -374,8 +503,9 @@ bench.flow             headless benchmark
 validate.flow          genetic engine against theory
 export_run.flow        headless run and VCF export
 equilibrium.flow       attractors against cold and warm starts
-life_world.flow        the life world app
+life_world.flow        the life world app, full screen
 life_bench.flow        headless life world
+life_shot.flow         headless renders and frame sequences
 sim/config.flow        sizes and default constants
 sim/params.flow        GW_ environment overrides
 sim/state.flow         World and Agents records
@@ -394,15 +524,26 @@ sim/reproduction.flow  mate choice and offspring
 sim/step.flow          the tick, phase by phase
 sim/stats.flow         allele frequencies, F_ST, heritability, dispersal
 sim/sampling.flow      VCF and TSV export
-life/lgenome.flow      256-locus genome, dominance series, meiosis
-life/develop.flow      body growth from the developmental genes
-life/creature.flow     the organism record and its phenotype
-life/brain.flow        the one-layer genetic brain
+life/lconfig.flow      sizes, modes, habitats, rates
+life/lgenome.flow      fixed loci, developmental programs, meiosis
+life/develop.flow      sparse 2D and 3D body growth
+life/creature.flow     the organism record, morphology, phenotype
+life/brain.flow        the genetic brain with a recurrent layer
+life/lworld.flow       the tick: medium, sensing, feeding, predation, breeding
+life/habitat.flow      habitats and experiment presets
+life/census.flow       forms, trophic roles, energy flows, histories
+life/ocean.flow        the Ocean and Sun flow models
 life/fluid.flow        stable fluids with walls
-life/ocean.flow        the Ocean evolution model: currents and upwelling
-life/lworld.flow       the life world's tick
-life/census.flow       body plans, bestiary, selection differentials
-life/lrender.flow      drawing bodies, flow and the panel
+viz/display.flow       full screen through Core Animation (Objective-C runtime)
+viz/typo.flow          CoreText typography
+viz/fb.flow            frame buffers and anti-aliased drawing
+viz/camera.flow        the 2D camera
+viz/scene.flow         shading the world: ocean, vessels, microscope styles
+viz/tracers.flow       marine snow and event effects
+viz/bodies.flow        drawing organisms in each mode
+viz/view3d.flow        the 3D view
+viz/hud.flow           the overlay, inspector, menu and help
+viz/view.flow          one frame, world and overlay
 sim/textbuf.flow       text output buffer
 sim/canvas.flow        framebuffer, text and numbers
 sim/render.flow        views and the genetics panel

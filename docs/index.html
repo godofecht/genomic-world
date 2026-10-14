@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Life World</title>
+<meta name="description" content="Organisms that grow from their genomes, live in an ocean or a laboratory dish, and evolve. Written in Flow.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0b0d10;
+  --panel: #12161b;
+  --line: #222830;
+  --ink: #ece6da;
+  --dim: #9a948a;
+  --faint: #6b665f;
+  --accent: #f2c46e;
+  --max: 1080px;
+}
+:root[data-theme="light"] {
+  --bg: #f6f3ee;
+  --panel: #ffffff;
+  --line: #e2ddd4;
+  --ink: #1d1b18;
+  --dim: #5c574f;
+  --faint: #8d877d;
+  --accent: #a8731a;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f6f3ee;
+    --panel: #ffffff;
+    --line: #e2ddd4;
+    --ink: #1d1b18;
+    --dim: #5c574f;
+    --faint: #8d877d;
+    --accent: #a8731a;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.65 Inter, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.wrap { max-width: var(--max); margin: 0 auto; padding: 0 16px; }
+header { padding: 72px 0 28px; }
+h1 { font-size: 44px; line-height: 1.1; font-weight: 600; margin: 0 0 14px; letter-spacing: -0.01em; }
+.lede { font-size: 19px; color: var(--dim); max-width: 720px; margin: 0; }
+.links { margin-top: 22px; display: flex; gap: 18px; flex-wrap: wrap; font-size: 15px; }
+.hero { margin: 28px 0 8px; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: #000; }
+.hero video, .hero img { display: block; width: 100%; height: auto; }
+.caption { color: var(--faint); font-size: 13px; margin: 8px 0 0; }
+section { padding: 56px 0 8px; }
+h2 { font-size: 26px; font-weight: 600; margin: 0 0 14px; }
+h3 { font-size: 17px; font-weight: 600; margin: 0 0 6px; }
+p { margin: 0 0 14px; max-width: 760px; }
+.dim { color: var(--dim); }
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; margin-top: 22px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.card video, .card img { display: block; width: 100%; height: auto; background: #000; }
+.card .body { padding: 16px 18px 18px; }
+.card p { font-size: 15px; margin: 0 0 8px; }
+.cite { font-size: 13px; color: var(--faint); }
+.result { font-size: 14px; color: var(--dim); border-left: 2px solid var(--accent); padding-left: 10px; margin-top: 10px; }
+ul { padding-left: 20px; max-width: 760px; }
+li { margin: 0 0 8px; }
+pre {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 14px 16px; overflow-x: auto; font: 13.5px/1.6 "JetBrains Mono", ui-monospace, monospace;
+  color: var(--ink);
+}
+table { border-collapse: collapse; width: 100%; max-width: 760px; font-size: 14.5px; margin: 10px 0 14px; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--dim); font-weight: 500; }
+td.k { font-family: "JetBrains Mono", ui-monospace, monospace; color: var(--accent); white-space: nowrap; }
+footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
+@media (max-width: 760px) {
+  header { padding-top: 44px; }
+  h1 { font-size: 34px; }
+  .lede { font-size: 17px; }
+  .grid { grid-template-columns: minmax(0, 1fr); }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Life World</h1>
+  <p class="lede">Organisms that grow from their genomes, live in an ocean or a laboratory dish, and evolve. Written in Flow; runs full screen.</p>
+  <div class="links">
+    <a href="https://github.com/godofecht/genomic-world">Source on GitHub</a>
+    <a href="#run">Run it</a>
+    <a href="#experiments">Experiments</a>
+    <a href="#limits">Limits</a>
+  </div>
+  <div class="hero">
+    <video src="media/ocean_follow.mp4" poster="media/ocean_zoom.jpg" autoplay muted loop playsinline></video>
+  </div>
+  <p class="caption">The open ocean, following one organism. Motors beat their flagella, eyes look ahead, spikes point out. Specks are marine snow carried by the currents.</p>
+</header>
+
+<section>
+  <h2>What it is</h2>
+  <p>Each organism is diploid. Its genome holds a developmental program, a brain and a set of morphological and physiological traits. A body grows from one cell by that program; the brain turns what it senses into turning and thrust; the body sets what it can eat, how fast it swims, how well it fights and what it costs to run. Organisms that gather enough energy breed, their genomes recombine and mutate, and lineages evolve.</p>
+  <p>What they become is left to evolution. The founders are a three-cell grazer. Predators, armour, eyes, photosynthesis, new body plans and longer developmental programs appear only if they evolve.</p>
+  <p class="dim">The same repository holds the Genomic World, a population-genetics simulator on the same engine whose genetics are checked against theory: drift, mutation-selection balance, linkage decay, selection and fixation, 14 checks, all within tolerance.</p>
+</section>
+
+<section>
+  <h2>Three ways to build an organism</h2>
+  <div class="grid">
+    <div class="card">
+      <img src="media/ocean_zoom.jpg" alt="Multicellular organisms of many body plans in the ocean, with the inspector open on a spiked predator" loading="lazy">
+      <div class="body">
+        <h3>Body plan</h3>
+        <p>Cells of eight types grown from a program of cell-identity genes: mouths, motors, eyes, armour, spikes, stores, photosynthetic cells. Genes duplicate and diverge, so the number of cell kinds is open.</p>
+      </div>
+    </div>
+    <div class="card">
+      <video src="media/morph_closeup.mp4" poster="media/dish_morph.jpg" autoplay muted loop playsinline></video>
+      <div class="body">
+        <h3>Morphology</h3>
+        <p>One cell built as a protist is. Size, shape, pigment, flagella, cilia, spines, membrane, eyespot, cytostome, raptorial organelles and chlorophyll are genes, and they set both how it looks and what it can do.</p>
+      </div>
+    </div>
+    <div class="card">
+      <img src="media/combined_3d.jpg" alt="Combined mode: multicellular 3D bodies seen in the 3D view" loading="lazy">
+      <div class="body">
+        <h3>Combined, in 3D</h3>
+        <p>The multicellular body, each cell sized, tinted and made better or worse at its job by the morphological genes. Bodies can grow in two dimensions or three.</p>
+      </div>
+    </div>
+    <div class="card">
+      <video src="media/dish_3d_orbit.mp4" poster="media/combined_3d.jpg" autoplay muted loop playsinline></video>
+      <div class="body">
+        <h3>2D and 3D views</h3>
+        <p>The 3D view ray-marches the terrain so ridges and dish walls stand up, and draws every body cell as a lit sphere. The camera orbits and follows.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="experiments">
+  <h2>Worlds and experiments</h2>
+  <p>The open ocean has gyres around ridges, upwelling that drifts, day and night. The laboratory presets are simplified versions of published experiments, so a run can be held against what happened in the real one.</p>
+  <div class="grid">
+    <div class="card">
+      <video src="media/range_timelapse.mp4" poster="media/range.jpg" autoplay muted loop playsinline></video>
+      <div class="body">
+        <h3>Range expansion on agar</h3>
+        <p>Two neutral strains spread from a drop. Cells hardly move on agar, so the colony grows at its edge, where few cells found each new patch.</p>
+        <p class="cite">Hallatschek, Hersen, Ramanathan and Nelson (2007), Genetic drift at expanding frontiers promotes gene segregation. PNAS 104: 19926.</p>
+        <p class="result">The strains separate into sectors at the edge, by drift alone.</p>
+      </div>
+    </div>
+    <div class="card">
+      <video src="media/megaplate_timelapse.mp4" poster="media/megaplate.jpg" autoplay muted loop playsinline></video>
+      <div class="body">
+        <h3>MEGA-plate</h3>
+        <p>A long plate with antibiotic in bands rising toward the middle, inoculated at both ends, under bright-field.</p>
+        <p class="cite">Baym, Lieberman, Chase, Gross and Kishony (2016), Spatiotemporal microbial evolution on antibiotic landscapes. Science 353: 1147.</p>
+        <p class="result">Mean resistance rises from 0.003 to 0.29 in 2,000 ticks and levels near 0.39; the most resistant cells reach the highest band and the population covers the plate.</p>
+      </div>
+    </div>
+    <div class="card">
+      <img src="media/refuge_dark.jpg" alt="Dark-field view of prey crowded into a sediment refuge at the left, predators in the open dish" loading="lazy">
+      <div class="body">
+        <h3>Predator and prey, with a refuge</h3>
+        <p>A raptorial predator and its prey in a small dish, in dark-field. In one version, sediment at the left edge hides prey.</p>
+        <p class="cite">Gause (1934), The Struggle for Existence.</p>
+        <p class="result">Without the refuge, predators boom, prey crash, and both are extinct by tick 14,838, as Didinium ate every Paramecium and then starved. With it, prey crowd into the sediment.</p>
+      </div>
+    </div>
+    <div class="card">
+      <img src="media/phototaxis.jpg" alt="A microscope slide lit from the right, with green cells gathered toward the lamp" loading="lazy">
+      <div class="body">
+        <h3>Phototaxis on a slide</h3>
+        <p>A slide lit from one end, on poor medium. Cells sense the light gradient along their heading and can steer by it.</p>
+        <p class="result">Green cells gather toward the lamp and stay there: a mean position of 172 to 185 along the slide, where 128 would be no bias, from tick 2,000 to 11,000.</p>
+      </div>
+    </div>
+    <div class="card">
+      <img src="media/ocean.jpg" alt="The whole ocean world with ridges, passes and thousands of organisms" loading="lazy">
+      <div class="body">
+        <h3>Open ocean</h3>
+        <p>A 2D incompressible flow drives food and drifters around ridges and through passes; current strength cycles and the upwelling moves, so what a body needs keeps changing.</p>
+        <p class="result">Predators appear within 2,000 ticks and settle between 2 and 16 percent of the population.</p>
+      </div>
+    </div>
+    <div class="card">
+      <img src="media/dish_morph.jpg" alt="A petri dish of single-celled organisms, with the inspector showing trait bars and the brain" loading="lazy">
+      <div class="body">
+        <h3>Petri dish, and serial transfer</h3>
+        <p>Liquid culture under a lamp. A serial-transfer version moves a tenth of the population to fresh medium every 600 ticks.</p>
+        <p class="cite">Lenski, Rose, Simpson and Tadler (1991), American Naturalist 138: 1315.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>How it works</h2>
+  <ul>
+    <li><b>Genome.</b> 640 fixed loci per haplotype on twenty chromosomes, recombining by Haldane's map, plus a developmental program of cell-identity genes. Programs cross over at most once per meiosis, sometimes misaligned by a gene, which duplicates or deletes one, as unequal crossing-over does.</li>
+    <li><b>Development.</b> Bodies grow cell by cell in 2D or 3D and are mirrored across the midline. A gene that grows its own identity repeats a segment; a timer stops it. Random programs grow bodies of up to 8,965 cells in tests.</li>
+    <li><b>Brain.</b> Ten inputs (food ahead and to each side, prey, threat, a possible mate, energy, the light gradient, the current across the body, a bias), four hidden neurons that feed back on themselves, two outputs. Every weight is genetic.</li>
+    <li><b>Ecology.</b> Grazing on algae that regrow; photosynthesis that shares light and draws nutrient; detritus that is scavenged and returned to the water as nutrient; predation by attack against defence; toxin and the cost of resisting it.</li>
+    <li><b>Water.</b> Stam's stable fluids on a 128 by 128 grid with walls; organisms drift with the current and swim against drag that depends on body shape.</li>
+    <li><b>Determinism.</b> Every random draw is a hash of an organism's seed, the tick and a purpose, so runs give the same state on any number of threads.</li>
+    <li><b>Viewer.</b> A software renderer in Flow, shown full screen through Core Animation at the panel's native resolution, with CoreText type. Natural colour, bright-field and dark-field styles. An inspector shows a followed organism's brain at work and its developmental program gene by gene.</li>
+  </ul>
+</section>
+
+<section id="run">
+  <h2>Run it</h2>
+  <p>Needs Flow 2.0 with the flowc C backend, a C11 compiler, and macOS for the window and the renderer's typography. Homebrew libomp makes the parallel loops use every core.</p>
+<pre>./run.sh life         the life world, full screen
+./run.sh life-bench   headless: forms, trophic roles, energy, selection
+./run.sh shot         headless renders (settings in life_shot.flow)
+./run.sh test         tests, determinism, validation against theory
+./run.sh              the Genomic World</pre>
+  <table>
+    <tr><th>Key</th><th>Action</th></tr>
+    <tr><td class="k">Tab</td><td>Choose a world: preset, mode, 2D or 3D bodies</td></tr>
+    <tr><td class="k">Space</td><td>Pause</td></tr>
+    <tr><td class="k">[ ]</td><td>Fewer or more ticks per frame</td></tr>
+    <tr><td class="k">wheel, drag</td><td>Zoom and pan; in 3D, right-drag turns</td></tr>
+    <tr><td class="k">click</td><td>Follow an organism; Esc lets go</td></tr>
+    <tr><td class="k">3</td><td>2D or 3D view</td></tr>
+    <tr><td class="k">V</td><td>Natural, bright-field or dark-field</td></tr>
+    <tr><td class="k">F</td><td>Show the flow</td></tr>
+    <tr><td class="k">G</td><td>Quality: fast, balanced or full resolution</td></tr>
+    <tr><td class="k">H</td><td>Every key</td></tr>
+  </table>
+</section>
+
+<section id="limits">
+  <h2>Limits</h2>
+  <ul>
+    <li>The experiments are simplified. The organisms are model cells, rates are scaled for speed, and a tick is not calibrated to any species.</li>
+    <li>Bodies are bounded only by a scratch grid (31 cells each way in 2D, 15 in 3D) and by energetics; the developmental program holds up to 48 genes per haplotype in the memory set aside for it.</li>
+    <li>The world is two-dimensional; 3D bodies swim in a plane.</li>
+    <li>Fitness emerges from an energy budget with hand-set constants. No selection coefficient is a parameter; selection is measured, parents against the population.</li>
+    <li>The window and the typography are macOS only for now.</li>
+  </ul>
+</section>
+
+<footer>
+  <div>Life World and the Genomic World, written in Flow. <a href="https://github.com/godofecht/genomic-world">github.com/godofecht/genomic-world</a></div>
+</footer>
+
+</div>
+</body>
+</html>

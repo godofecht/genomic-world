@@ -261,6 +261,7 @@ export function life_new(seed: u32, cfg: LifeCfg) -> Life {
         par_v: 0.0, par_w: 0.0, par_n: 0.0,
         profile: false, prof: alloc_zeroed(8 * 8) as ptr<f64>
     }
+    life_smooth_fertility(&l)
     for c in 0 to WORLD_CELLS {
         l.base_fert[c] = l.env.fert[c]
         l.det[c] = 0.0
@@ -271,6 +272,35 @@ export function life_new(seed: u32, cfg: LifeCfg) -> Life {
     l.daylight = life_daylight(&l)
     fluid_walls(&l.fluid, &l.env)
     return l
+}
+
+# The landscape's fertility comes from value noise on a coarse lattice,
+# which leaves square steps; four box blurs over the open water smooth
+# them, so the algae it feeds have no grid. Ridges stay barren.
+function life_smooth_fertility(l: ptr<Life>) -> void {
+    let f: ptr<f32> = l.env.fert
+    let t: ptr<f32> = l.food2
+    for pass in 0 to 4 {
+        for y in 0 to WORLD_H {
+            for x in 0 to WORLD_W {
+                let mut acc: f32 = 0.0
+                for k in 0 to 9 {
+                    let xx: i32 = (x + k % 3 - 1) & (WORLD_W - 1)
+                    let yy: i32 = (y + k / 3 - 1) & (WORLD_H - 1)
+                    acc = acc + f[yy * WORLD_W + xx]
+                }
+                t[y * WORLD_W + x] = acc / 9.0
+            }
+        }
+        for c in 0 to WORLD_CELLS {
+            if l.env.terrain[c] == TERRAIN_RIDGE {
+                f[c] = 0.0
+            } else {
+                f[c] = t[c]
+            }
+            l.env.food[c] = 0.6 * f[c]
+        }
+    }
 }
 
 # After a habitat rewrites terrain or fertility: refresh what depends on

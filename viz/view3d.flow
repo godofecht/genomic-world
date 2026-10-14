@@ -182,7 +182,7 @@ function ground(v: ptr<View3>, c: ptr<Cam3>, s: ptr<Scene>, sh: ptr<Shade>, ocea
     let hgt: ptr<f32> = s.height
     let mut top: f32 = RIDGE_Z
     if !ocean { top = RIM_Z }
-    let focal: f32 = c.focal * 0.5
+    let focal: f32 = c.focal
     parallel for y in 0 to hh {
         for x in 0 to w {
             let ox: f32 = ((x as f32) + 0.5 - (w as f32) * 0.5) / focal
