@@ -133,6 +133,13 @@ static void disp_present2_c(uint32_t* px, int32_t w, int32_t h, uint32_t* hp, in
     if (himg) CGImageRelease(himg);
 }
 
+/* Nearest filtering keeps pixel-style frames square when scaled up. */
+static void disp_nearest_c(int32_t on) {
+    if (!disp_attach_c()) return;
+    id f = on ? (id)CFSTR(\"nearest\") : (id)CFSTR(\"linear\");
+    disp_m1(disp_layer_, \"setMagnificationFilter:\", f);
+}
+
 static void disp_fullscreen_c(void) {
     if (!disp_attach_c()) return;
     disp_m1(disp_win_, \"toggleFullScreen:\", (id)0);
@@ -188,6 +195,7 @@ extern {
     function disp_is_fullscreen_c() -> i32
     function disp_mouse_c(out: ptr<i32>, bw: i32, bh: i32) -> void
     function disp_view_px_c(out: ptr<i32>) -> i32
+    function disp_nearest_c(on: i32) -> void
     function disp_present2_c(px: ptr<u32>, w: i32, h: i32, hp: ptr<u32>, hw: i32, hh: i32, fresh: i32) -> void
 }
 
@@ -231,6 +239,12 @@ export function disp_present2(px: ptr<u32>, w: i32, h: i32, hp: ptr<u32>, hw: i3
     let mut f: i32 = 0
     if fresh { f = 1 }
     disp_present2_c(px, w, h, hp, hw, hh, f)
+}
+
+export function disp_nearest(on: bool) -> void {
+    let mut v: i32 = 0
+    if on { v = 1 }
+    disp_nearest_c(v)
 }
 
 export function disp_fullscreen() -> void {

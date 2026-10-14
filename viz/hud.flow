@@ -576,7 +576,7 @@ function trait_name(k: i32) -> string {
 }
 
 function hud_hint(f: Frame, h: ptr<Hud>) -> void {
-    let s: string = "H help    Tab new world    Space pause    [ ] speed    V style    3 view    click to follow"
+    let s: string = "H help    Tab new world    Space pause    [ ] speed    V style    G quality    3 view    click to follow"
     let w: i32 = text_w(f, h, s, FACE_TEXT, 10.5) + px(h, 24.0)
     let y: i32 = f.h - px(h, 34.0)
     fb_panel(f, px(h, 18.0), y, w, px(h, 22.0), 8.0 * h.u, PANEL, 150)
@@ -610,7 +610,7 @@ function hud_help(f: Frame, h: ptr<Hud>) -> void {
     ky = ky + px(h, 22.0)
     key_row(f, h, ix, ky, "3", "2D or 3D view")
     ky = ky + px(h, 22.0)
-    key_row(f, h, ix, ky, "V", "natural, bright-field or dark-field")
+    key_row(f, h, ix, ky, "V", "pixels, natural, bright-field or dark-field")
     ky = ky + px(h, 22.0)
     key_row(f, h, ix, ky, "F", "show the flow")
     ky = ky + px(h, 22.0)

@@ -37,6 +37,8 @@ extern {
 const CAUSTIC_N: i32 = 128
 
 struct Scene {
+    # one colour per world cell, for the pixel style
+    cellcol: ptr<u32>,
     height: ptr<f32>,
     tmp: ptr<f32>,
     pass: ptr<f32>,
@@ -48,6 +50,7 @@ struct Scene {
 export function scene_new() -> Scene {
     let n: i64 = WORLD_CELLS as i64
     let mut s: Scene = Scene {
+        cellcol: alloc_zeroed(n * 4) as ptr<u32>,
         height: alloc_f32(n), tmp: alloc_f32(n), pass: alloc_f32(n),
         caustic: alloc_f32((CAUSTIC_N * CAUSTIC_N) as i64),
         vort: alloc_f32(FL_CELLS as i64),
@@ -514,6 +517,140 @@ export function scene_draw(f: Frame, s: ptr<Scene>, cam: ptr<Camera>, l: ptr<Lif
             if wrap { wx = cam_wrap(wx, WORLD_W as f32) }
             let vx: f32 = ((x as f32) / (fw as f32)) - 0.5
             px[row + x] = vignette(shade_point(c, wx, wy), 1.0 - 0.40 * (vx * vx + vy * vy))
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Pixel style: the world straight from its grids, one colour per world
+# cell, as the simulation holds it. Nothing is computed per screen pixel
+# but a lookup; the GPU scales the frame up with nearest filtering.
+# ---------------------------------------------------------------------------
+
+function pix(r: i32, g: i32, b: i32) -> u32 {
+    return pack(clamp255(r), clamp255(g), clamp255(b))
+}
+
+# Colour every world cell from the fields.
+export function scene_cells(s: ptr<Scene>, l: ptr<Life>, flow_view: bool) -> void {
+    let cc: ptr<u32> = s.cellcol
+    let food: ptr<f32> = l.env.food
+    let det: ptr<f32> = l.det
+    let tox: ptr<f32> = l.toxin
+    let lm: ptr<f32> = l.lightmap
+    let refuge: ptr<u8> = l.refuge
+    let terrain: ptr<u8> = l.env.terrain
+    let vort: ptr<f32> = s.vort
+    let ocean: bool = l.cfg.habitat == HAB_OCEAN
+    let agar: bool = l.cfg.flow <= 0.0
+    let open: bool = l.env.passes_open
+    let day: f32 = l.daylight
+    let amb: f32 = 0.25 + 0.75 * day
+    let fv: bool = flow_view
+    parallel for y in 0 to WORLD_H {
+        for x in 0 to WORLD_W {
+            let c: i32 = y * WORLD_W + x
+            let t: u8 = terrain[c]
+            let f: f32 = food[c]
+            let d: f32 = det[c]
+            let mut col: u32 = 0 as u32
+            if ocean {
+                let w: f32 = fl_sample(vort, (x as f32) * 0.5 - 0.25, (y as f32) * 0.5 - 0.25)
+                let mut gain: f32 = 220.0
+                if fv { gain = 1400.0 }
+                let mut wr: i32 = (w * gain) as i32
+                let mut wb: i32 = (0.0 - w * gain) as i32
+                if wr < 0 { wr = 0 }
+                if wb < 0 { wb = 0 }
+                let mut r: f32 = (10 + ((22.0 * f) as i32) + wr + ((30.0 * d) as i32)) as f32
+                let mut g: f32 = (14 + ((60.0 * f) as i32) + ((18.0 * d) as i32)) as f32
+                let mut b: f32 = (16 + ((20.0 * f) as i32) + wb) as f32
+                if fv {
+                    r = (12 + wr) as f32
+                    g = (14 + (wr + wb) / 4) as f32
+                    b = (18 + wb) as f32
+                }
+                if t == TERRAIN_RIDGE {
+                    r = 70.0
+                    g = 64.0
+                    b = 60.0
+                } elif t == TERRAIN_PASS {
+                    if open {
+                        r = 92.0
+                        g = 80.0
+                        b = 54.0
+                    } else {
+                        r = 130.0
+                        g = 46.0
+                        b = 40.0
+                    }
+                }
+                col = pix((r * amb) as i32, (g * amb) as i32, ((b * amb) as i32) + ((1.0 - day) * 10.0) as i32)
+            } elif t == TERRAIN_RIDGE {
+                # The bench, and the vessel's rim where it meets the medium.
+                let mut rim: bool = false
+                for k in 0 to 4 {
+                    let xx: i32 = (x + (k % 2) * (2 * (k / 2) - 1)) & (WORLD_W - 1)
+                    let yy: i32 = (y + ((k + 1) % 2) * (2 * (k / 2) - 1)) & (WORLD_H - 1)
+                    if terrain[yy * WORLD_W + xx] != TERRAIN_RIDGE { rim = true }
+                }
+                if rim { col = pix(150, 160, 170) } else { col = pix(22, 24, 27) }
+            } else {
+                let k: f32 = 0.55 + 0.45 * lm[c]
+                let mut r: f32 = 0.0
+                let mut g: f32 = 0.0
+                let mut b: f32 = 0.0
+                if agar {
+                    r = 168.0 + 26.0 * (1.0 - f) - 50.0 * d
+                    g = 132.0 + 26.0 * (1.0 - f) - 46.0 * d
+                    b = 76.0 + 30.0 * (1.0 - f) - 26.0 * d
+                } else {
+                    r = 96.0 - 24.0 * f + 20.0 * d
+                    g = 122.0 + 12.0 * f
+                    b = 136.0 - 28.0 * f - 20.0 * d
+                }
+                let tt: f32 = tox[c] * 0.3
+                r = r + 50.0 * tt
+                g = g - 30.0 * tt
+                if refuge[c] != (0 as u8) {
+                    r = r * 0.7
+                    g = g * 0.62
+                    b = b * 0.5
+                }
+                col = pix((r * k) as i32, (g * k) as i32, (b * k) as i32)
+            }
+            cc[c] = col
+        }
+    }
+}
+
+# Fill the frame from the cell colours: every pixel takes its world cell's
+# colour; off a vessel's world is bench.
+export function scene_pixel(f: Frame, s: ptr<Scene>, cam: ptr<Camera>) -> void {
+    let cc: ptr<u32> = s.cellcol
+    let px: ptr<u32> = f.px
+    let fw: i32 = f.w
+    let fh: i32 = f.h
+    let inv: f32 = 1.0 / cam.scale
+    let x0w: f32 = cam.cx - (fw as f32) * 0.5 * inv
+    let y0w: f32 = cam.cy - (fh as f32) * 0.5 * inv
+    let wrap: bool = cam.wrap
+    let bench: u32 = pix(22, 24, 27)
+    parallel for y in 0 to fh {
+        let wy: f32 = floorf(y0w + ((y as f32) + 0.5) * inv)
+        let mut cy: i32 = wy as i32
+        let row: i32 = y * fw
+        let mut outside_y: bool = false
+        if wrap { cy = cy & (WORLD_H - 1) } elif cy < 0 or cy >= WORLD_H { outside_y = true }
+        for x in 0 to fw {
+            let mut cx: i32 = floorf(x0w + ((x as f32) + 0.5) * inv) as i32
+            if wrap {
+                px[row + x] = cc[cy * WORLD_W + (cx & (WORLD_W - 1))]
+            } elif outside_y or cx < 0 or cx >= WORLD_W {
+                px[row + x] = bench
+            } else {
+                px[row + x] = cc[cy * WORLD_W + cx]
+            }
         }
     }
 }

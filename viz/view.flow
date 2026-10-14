@@ -95,13 +95,11 @@ export function view_reset(v: ptr<View>, l: ptr<Life>) -> void {
     v.cam.wrap = l.cfg.habitat == HAB_OCEAN
     v.cam3 = cam3_new(v.w, v.h)
     v.cam3.wrap = v.cam.wrap
+    v.style = STYLE_PIXEL
     if l.cfg.habitat == HAB_SLIDE {
         # A slide is long: fit its width.
         v.cam.scale = (v.w as f32) * 0.78 / 250.0
-        v.style = STYLE_BRIGHT
         v.cam3.dist = 170.0
-    } else {
-        v.style = STYLE_NATURAL
     }
     v.tr = tracers_new()
     v.tr.ev_seen = l.ev_total
@@ -137,6 +135,24 @@ export function view_render(v: ptr<View>, l: ptr<Life>, cs: ptr<Census>, preset:
     v.flip = !v.flip
     if v.view3d {
         view3_draw(&v.v3, world, &v.cam3, &v.scene, l, v.clock, v.flow_view, v.style)
+    } elif v.style == STYLE_PIXEL {
+        # Straight from the grids, at half size; the GPU scales it up with
+        # nearest filtering, so pixels stay square.
+        world = v.la
+        if !v.flip { world = v.lb }
+        let mut cam: Camera = v.cam
+        cam.w = world.w
+        cam.h = world.h
+        cam.scale = cam.scale * 0.5
+        scene_cells(&v.scene, l, v.flow_view)
+        scene_pixel(world, &v.scene, &cam)
+        t = vlap(v, 1, t)
+        drawlist_build(&v.dl_lo, l, &cam)
+        t = vlap(v, 7, t)
+        bodies_draw(world, &v.dl_lo, l, &cam, look)
+        t = vlap(v, 3, t)
+        effects_pixel(world, &v.tr, &cam)
+        t = vlap(v, 4, t)
     } elif v.half {
         let mut cam: Camera = v.cam
         cam.w = world.w
@@ -179,7 +195,7 @@ export function view_compose(v: ptr<View>, s: Shown) -> Frame {
     if s.world.w != v.w {
         out = v.a
         if s.world.px == v.a.px { out = v.b }
-        fb_upscale2(s.world, out)
+        if v.style == STYLE_PIXEL and !v.view3d { fb_upscale2_nearest(s.world, out) } else { fb_upscale2(s.world, out) }
     }
     fb_over(out, s.hud)
     return out

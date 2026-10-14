@@ -90,7 +90,7 @@ function main() -> i32 {
         w = 1920
         h = 1200
     }
-    let mut app: App = App { preset: P_OCEAN, seed: params_seed(20261014 as u32), steps: 8,
+    let mut app: App = App { preset: P_OCEAN, seed: params_seed(20261014 as u32), steps: 4,
                              paused: false, selected: 0 as u32, quit: false }
     let mut l: Life = life_create(app.seed, app.preset, MODE_PLAN, 2)
     let mut cs: Census = census_new()
@@ -116,6 +116,7 @@ function main() -> i32 {
     let mut fps: f32 = 60.0
     let mut t_last: f64 = gfx_time_ms(g)
     let mut size_seen: i32 = 0
+    let mut was_pixel: bool = false
 
     while !app.quit {
         gfx_poll(g)
@@ -219,10 +220,11 @@ function main() -> i32 {
                 }
             }
             if tap(g, &keys, KEY_V) {
-                v.style = (v.style + 1) % 3
+                v.style = (v.style + 1) % 4
                 if v.style == STYLE_NATURAL { hud_toast(&v.hud, "Natural colour") }
                 if v.style == STYLE_BRIGHT { hud_toast(&v.hud, "Bright-field") }
                 if v.style == STYLE_DARK { hud_toast(&v.hud, "Dark-field") }
+                if v.style == STYLE_PIXEL { hud_toast(&v.hud, "Pixels: the world as its grids hold it") }
             }
             if tap(g, &keys, KEY_THREE) {
                 v.view3d = !v.view3d
@@ -332,6 +334,11 @@ function main() -> i32 {
         v.hud.sim_ms = v.hud.sim_ms + 0.1 * (((t_draw - t_sim) as f32) - v.hud.sim_ms)
         let shown: Shown = view_render(&v, &l, &cs, app.preset, app.steps, app.paused, sel, fps,
                                        v.hud.menu or v.hud.help)
+        let pixel: bool = v.style == STYLE_PIXEL and !v.view3d
+        if pixel != was_pixel {
+            disp_nearest(pixel)
+            was_pixel = pixel
+        }
         disp_present2(shown.world.px, shown.world.w, shown.world.h, shown.hud.px, shown.hud.w, shown.hud.h,
                       shown.hud_fresh)
         v.hud.draw_ms = v.hud.draw_ms + 0.1 * (((gfx_time_ms(g) - t_draw) as f32) - v.hud.draw_ms)

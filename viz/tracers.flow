@@ -219,3 +219,25 @@ export function effects_draw(f: Frame, t: ptr<Tracers>, cam: ptr<Camera>) -> voi
         }
     }
 }
+
+# Pixel style effects: a kill is a red square that fades, a birth a white
+# pixel, a death a brown one.
+export function effects_pixel(f: Frame, t: ptr<Tracers>, cam: ptr<Camera>) -> void {
+    let s: f32 = cam.scale
+    let q: i32 = max_i(1, (s * 1.5) as i32)
+    for k in 0 to FX_MAX {
+        let age: f32 = t.fx_age[k]
+        if age < 12.0 {
+            let sx: i32 = cam_sx(cam, t.fx_x[k]) as i32
+            let sy: i32 = cam_sy(cam, t.fx_y[k]) as i32
+            let kind: i32 = t.fx_k[k]
+            if kind == EV_KILL {
+                fb_rect(f, sx - q / 2, sy - q / 2, q, q, 0xff3c3c, (200.0 * (1.0 - age / 12.0)) as i32)
+            } elif kind == EV_BIRTH and age < 4.0 {
+                fb_rect(f, sx, sy, max_i(1, q / 2), max_i(1, q / 2), 0xf0fff0, 180)
+            } elif age < 6.0 {
+                fb_rect(f, sx, sy, max_i(1, q / 2), max_i(1, q / 2), 0x6a4a2a, 160)
+            }
+        }
+    }
+}

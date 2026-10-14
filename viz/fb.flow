@@ -184,6 +184,15 @@ export function fb_rect(f: Frame, x: i32, y: i32, w: i32, h: i32, rgb: i32, a: i
         }
         return
     }
+    # Threads only pay off on large areas.
+    if (yb - ya) * (xb - xa) < 40000 {
+        for yy in ya to yb {
+            for xx in xa to xb {
+                fb_mix(f, yy * f.w + xx, rgb, a)
+            }
+        }
+        return
+    }
     parallel for yy in ya to yb {
         for xx in xa to xb {
             fb_mix(f, yy * f.w + xx, rgb, a)
@@ -214,22 +223,33 @@ export function fb_panel(f: Frame, x: i32, y: i32, w: i32, h: i32, rad: f32, rgb
     let hy: f32 = 0.5 * (h as f32)
     let cx: f32 = (x as f32) + hx
     let cy: f32 = (y as f32) + hy
+    if (yb - ya) * (xb - xa) < 40000 {
+        for yy in ya to yb {
+            panel_row(f, yy, xa, xb, cx, cy, hx, hy, rad, rgb, a)
+        }
+        return
+    }
     parallel for yy in ya to yb {
-        let py: f32 = abs_f((yy as f32) + 0.5 - cy) - (hy - rad)
-        for xx in xa to xb {
-            let px: f32 = abs_f((xx as f32) + 0.5 - cx) - (hx - rad)
-            let mut d: f32 = 0.0
-            if px > 0.0 and py > 0.0 {
-                d = sqrtf(px * px + py * py) - rad
-            } else {
-                let mut m: f32 = px
-                if py > m { m = py }
-                d = m - rad
-            }
-            let c: i32 = cover(d)
-            if c > 0 {
-                fb_mix(f, yy * f.w + xx, rgb, (c * a) >> 8)
-            }
+        panel_row(f, yy, xa, xb, cx, cy, hx, hy, rad, rgb, a)
+    }
+}
+
+function panel_row(f: Frame, yy: i32, xa: i32, xb: i32, cx: f32, cy: f32, hx: f32, hy: f32,
+                   rad: f32, rgb: i32, a: i32) -> void {
+    let py: f32 = abs_f((yy as f32) + 0.5 - cy) - (hy - rad)
+    for xx in xa to xb {
+        let px: f32 = abs_f((xx as f32) + 0.5 - cx) - (hx - rad)
+        let mut d: f32 = 0.0
+        if px > 0.0 and py > 0.0 {
+            d = sqrtf(px * px + py * py) - rad
+        } else {
+            let mut m: f32 = px
+            if py > m { m = py }
+            d = m - rad
+        }
+        let c: i32 = cover(d)
+        if c > 0 {
+            fb_mix(f, yy * f.w + xx, rgb, (c * a) >> 8)
         }
     }
 }
@@ -388,6 +408,41 @@ export function fb_line(f: Frame, x0: f32, y0: f32, x1: f32, y1: f32, width: f32
     }
 }
 
+# A hard one-pixel line (Bresenham), clipped to the frame's band.
+export function fb_pline(f: Frame, x0f: f32, y0f: f32, x1f: f32, y1f: f32, rgb: i32) -> void {
+    let v: u32 = pack_rgb(rgb)
+    let mut x0: i32 = floorf(x0f) as i32
+    let mut y0: i32 = floorf(y0f) as i32
+    let x1: i32 = floorf(x1f) as i32
+    let y1: i32 = floorf(y1f) as i32
+    let mut dx: i32 = x1 - x0
+    if dx < 0 { dx = 0 - dx }
+    let mut dy: i32 = y1 - y0
+    if dy > 0 { dy = 0 - dy }
+    let mut sx: i32 = 1
+    if x0 > x1 { sx = -1 }
+    let mut sy: i32 = 1
+    if y0 > y1 { sy = -1 }
+    let mut err: i32 = dx + dy
+    let mut steps: i32 = 0
+    while steps < 4096 {
+        if x0 >= 0 and x0 < f.w and y0 >= f.y0 and y0 < f.y1 {
+            f.px[y0 * f.w + x0] = v
+        }
+        if x0 == x1 and y0 == y1 { break }
+        let e2: i32 = 2 * err
+        if e2 >= dy {
+            err = err + dy
+            x0 = x0 + sx
+        }
+        if e2 <= dx {
+            err = err + dx
+            y0 = y0 + sy
+        }
+        steps = steps + 1
+    }
+}
+
 # Filled triangle, anti-aliased by edge distance.
 export function fb_tri(f: Frame, ax: f32, ay: f32, bx: f32, by: f32, cx: f32, cy: f32, rgb: i32, a: i32) -> void {
     let mut lx: f32 = ax
@@ -492,6 +547,20 @@ export function fb_upscale2(src: Frame, dst: Frame) -> void {
                 out = out | ((val as u32) << sh)
             }
             px[y * fw + x] = out
+        }
+    }
+}
+
+# Scale src up by two into dst, nearest: each pixel becomes a 2 x 2 block.
+export function fb_upscale2_nearest(src: Frame, dst: Frame) -> void {
+    let lp: ptr<u32> = src.px
+    let px: ptr<u32> = dst.px
+    let lw: i32 = src.w
+    let fw: i32 = dst.w
+    parallel for y in 0 to min_i(dst.h, src.h * 2) {
+        let sr: i32 = (y >> 1) * lw
+        for x in 0 to min_i(fw, lw * 2) {
+            px[y * fw + x] = lp[sr + (x >> 1)]
         }
     }
 }
