@@ -15,6 +15,9 @@
 #      a raptorial cell attacks and a spiny one defends
 #   8  short runs in plan (2D), morph and combined (3D) modes keep every
 #      organism alive in the table with a body, and the cell arena packed
+#   9  evolved networks: a hand-built neuron computes what its gene says;
+#      insertion, duplication and deletion change network size both ways;
+#      swapping homologs leaves the expressed network unchanged
 
 import "stdlib/memory.flow"
 import gsim.config
@@ -30,6 +33,11 @@ import glife.habitat
 
 extern {
     function fabs(x: f64) -> f64
+    function tanhf(x: f32) -> f32
+}
+
+function tanhf_t(x: f32) -> f32 {
+    return tanhf(x)
 }
 
 function body_ok(cells: ptr<u32>, off: i32, n: i32, dims: i32) -> bool {
@@ -66,11 +74,12 @@ function main() -> i32 {
     let brain: ptr<f32> = alloc_f32((n * BRAIN_W) as i64)
     let cr: ptr<Creature> = alloc_bytes((n as i64) * CR_BYTES) as ptr<Creature>
     let looks: ptr<Morph> = alloc_bytes((n as i64) * MORPH_BYTES) as ptr<Morph>
+    let nets: ptr<u8> = alloc_zeroed((n * NETX) as i64) as ptr<u8>
     let cells: ptr<u32> = alloc_zeroed(4 * 200000) as ptr<u32>
     let mut x: Expr = expr_new()
 
     luca(g, 0, &st)
-    let nb: i32 = express(cr, g, brain, looks, 0, MODE_PLAN, 2, &x, cells, 0)
+    let nb: i32 = express(cr, g, brain, looks, nets, 0, MODE_PLAN, 2, &x, cells, 0)
     let mut mouth_ok: bool = false
     let mut core_ok: bool = false
     let mut motor_ok: bool = false
@@ -107,7 +116,7 @@ function main() -> i32 {
         let k: i32 = 1 + rng_below(&st, 12)
         random_prog(g, L_WORDS, 0, k, &st)
         random_prog(g, L_WORDS, 1, 1 + rng_below(&st, 12), &st)
-        let nb1: i32 = express(cr, g, brain, looks, 1, MODE_PLAN, dims, &x, cells, 0)
+        let nb1: i32 = express(cr, g, brain, looks, nets, 1, MODE_PLAN, dims, &x, cells, 0)
         if nb1 > 10 { big = big + 1 }
         if nb1 > biggest { biggest = nb1 }
         if !body_ok(cells, 0, nb1, dims) {
@@ -124,7 +133,7 @@ function main() -> i32 {
             g[prog_at(2 * L_WORDS, 0) + w] = g[prog_at(L_WORDS, 1) + w]
             g[prog_at(2 * L_WORDS, 1) + w] = g[prog_at(L_WORDS, 0) + w]
         }
-        let nb2: i32 = express(cr, g, brain, looks, 2, MODE_PLAN, dims, &x, cells, 0)
+        let nb2: i32 = express(cr, g, brain, looks, nets, 2, MODE_PLAN, dims, &x, cells, 0)
         if cr[2].plan != h1 or nb2 != nb1 {
             printf("FAIL 3 homolog swap changed the body\n")
             return 3
@@ -191,18 +200,18 @@ function main() -> i32 {
 
     # 7. Morph mode: traits act on function.
     luca(g, 0, &st)
-    let e0: i32 = express(cr, g, brain, looks, 0, MODE_MORPH, 2, &x, cells, 0)
+    let e0: i32 = express(cr, g, brain, looks, nets, 0, MODE_MORPH, 2, &x, cells, 0)
     let m0: f32 = cr[0].mass
     let v0: f32 = cr[0].vmax
     l_set_dosage(g, 0, M_SIZE, 8, 12)
-    let e1: i32 = express(cr, g, brain, looks, 0, MODE_MORPH, 2, &x, cells, 0)
+    let e1: i32 = express(cr, g, brain, looks, nets, 0, MODE_MORPH, 2, &x, cells, 0)
     if cr[0].mass <= m0 {
         printf("FAIL 7 bigger cell not heavier\n")
         return 7
     }
     l_set_dosage(g, 0, M_SIZE, 8, 4)
     l_set_int(g, 0, M_FLAGN, 3, 4)
-    let e2: i32 = express(cr, g, brain, looks, 0, MODE_MORPH, 2, &x, cells, 0)
+    let e2: i32 = express(cr, g, brain, looks, nets, 0, MODE_MORPH, 2, &x, cells, 0)
     if cr[0].vmax <= v0 {
         printf("FAIL 7 more flagella not faster\n")
         return 7
@@ -212,7 +221,7 @@ function main() -> i32 {
     l_set_dosage(g, 0, M_RAPTOR, 4, 8)
     l_set_int(g, 0, M_SPINEN, 4, 9)
     l_set_dosage(g, 0, M_SPINEL, 6, 12)
-    let e3: i32 = express(cr, g, brain, looks, 0, MODE_MORPH, 2, &x, cells, 0)
+    let e3: i32 = express(cr, g, brain, looks, nets, 0, MODE_MORPH, 2, &x, cells, 0)
     if cr[0].attack <= a0 or cr[0].defense <= d0 {
         printf("FAIL 7 raptorial or spines do nothing\n")
         return 7
@@ -250,6 +259,77 @@ function main() -> i32 {
             printf("FAIL 8 extinct\n")
             return 8
         }
+    }
+    # 9. Evolved networks.
+    for w in 0 to L_WORDS {
+        g[w] = 0 as u32
+    }
+    # One tanh neuron: bias 0, no self weight, input 1 (food ahead) at
+    # weight field 47 (2.0), onto turning at field 39 (0.9375).
+    let nw0: u32 = (0 as u32) | ((31 as u32) << (2 as u32)) | ((32 as u32) << (8 as u32)) | ((1 as u32) << (14 as u32))
+                | ((47 as u32) << (20 as u32))
+    let nw1: u32 = ((32 as u32) << (0 as u32)) | ((39 as u32) << (18 as u32)) | ((32 as u32) << (24 as u32))
+    for h in 0 to 2 {
+        let p: i32 = neur_at(0, h)
+        g[p] = 1 as u32
+        g[p + 1] = nw0
+        g[p + 2] = nw1
+    }
+    let k1: i32 = neur_express(g, 0, nets, 0)
+    let xin: array<f32, 10> = [0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+    let hz: array<f32, 4> = [0.0, 0.0, 0.0, 0.0]
+    let stt: ptr<f32> = alloc_f32(NEUR_MAX as i64)
+    let outv: array<f32, 2> = [0.0, 0.0]
+    brain_net(nets, 0, xin, hz, stt, 0, outv)
+    # bias field 31 is -0.0625, self field 32 is +0.0625 times state 0.
+    let want: f32 = nw(39) * tanhf_t(nw(31) + nw(47) * 0.5)
+    if k1 != 1 or fabs((outv[0] - want) as f64) > 0.0001 or fabs(outv[1] as f64) > 0.05 {
+        printf("FAIL 9 neuron output %f, expected %f\n", outv[0] as f64, want as f64)
+        return 9
+    }
+    let mut grew: i32 = 0
+    let mut shrank: i32 = 0
+    let mut biggest_net: i32 = 0
+    for trial in 0 to 4000 {
+        for h in 0 to 2 {
+            let p: i32 = neur_at(0, h)
+            let kk: i32 = 3 + rng_below(&st, 6)
+            g[p] = kk as u32
+            for q in 0 to 2 * kk { g[p + 1 + q] = rng_word(&st) }
+            let p1: i32 = neur_at(L_WORDS, h)
+            g[p1] = kk as u32
+            for q in 0 to 2 * kk { g[p1 + 1 + q] = rng_word(&st) }
+        }
+        let before: i32 = g[neur_at(0, 0)] as i32
+        l_cross(g, 0, 1, 2, &st, &a, 0.0, 1.0, 0.001)
+        let after: i32 = g[neur_at(2 * L_WORDS, 0)] as i32
+        if after > 8 { grew = grew + 1 }
+        if after < 3 { shrank = shrank + 1 }
+        if after > biggest_net { biggest_net = after }
+        # Homolog swap leaves the expressed network unchanged.
+        let ka: i32 = neur_express(g, 2 * L_WORDS, nets, 0)
+        for w in 0 to NEUH {
+            let t: u32 = g[neur_at(2 * L_WORDS, 0) + w]
+            g[neur_at(2 * L_WORDS, 0) + w] = g[neur_at(2 * L_WORDS, 1) + w]
+            g[neur_at(2 * L_WORDS, 1) + w] = t
+        }
+        let kb: i32 = neur_express(g, 2 * L_WORDS, nets, NETX)
+        if ka != kb {
+            printf("FAIL 9 homolog swap changed network size\n")
+            return 9
+        }
+        for q in 0 to 1 + ka * NEUR_FIELDS {
+            if nets[q] != nets[NETX + q] {
+                printf("FAIL 9 homolog swap changed the network\n")
+                return 9
+            }
+        }
+    }
+    printf("  4000 gametes of evolved networks: %d grew past 8 neurons, %d shrank below 3, largest %d; homolog-swap invariant\n",
+           grew, shrank, biggest_net)
+    if grew == 0 or shrank == 0 {
+        printf("FAIL 9 network size never changed both ways\n")
+        return 9
     }
     printf("OK life\n")
     return 0

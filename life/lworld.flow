@@ -143,10 +143,16 @@ struct Life {
     genome: ptr<u32>,
     brain: ptr<f32>,
     looks: ptr<Morph>,
+    # evolved networks, expressed (NETX bytes each), and their neurons'
+    # state (NEUR_MAX floats each)
+    nets: ptr<u8>,
+    nstate: ptr<f32>,
     cr2: ptr<Creature>,
     genome2: ptr<u32>,
     brain2: ptr<f32>,
     looks2: ptr<Morph>,
+    nets2: ptr<u8>,
+    nstate2: ptr<f32>,
 
     # body cells: an arena, double-buffered for compaction
     cells: ptr<u32>,
@@ -200,6 +206,7 @@ struct Life {
     par_v: f64,
     par_w: f64,
     par_n: f64,
+    par_nn: f64,
 
     # time spent in each phase of the tick, nanoseconds, when profiling
     profile: bool,
@@ -227,10 +234,14 @@ export function life_new(seed: u32, cfg: LifeCfg) -> Life {
         genome: alloc_zeroed(m * 4 * (L_WORDS as i64)) as ptr<u32>,
         brain: alloc_f32(m * (BRAIN_W as i64)),
         looks: alloc_bytes(m * MORPH_BYTES) as ptr<Morph>,
+        nets: alloc_zeroed(m * (NETX as i64)) as ptr<u8>,
+        nstate: alloc_f32(m * (NEUR_MAX as i64)),
         cr2: alloc_bytes(m * CR_BYTES) as ptr<Creature>,
         genome2: alloc_zeroed(m * 4 * (L_WORDS as i64)) as ptr<u32>,
         brain2: alloc_f32(m * (BRAIN_W as i64)),
         looks2: alloc_bytes(m * MORPH_BYTES) as ptr<Morph>,
+        nets2: alloc_zeroed(m * (NETX as i64)) as ptr<u8>,
+        nstate2: alloc_f32(m * (NEUR_MAX as i64)),
         cells: alloc_zeroed(cap * 4) as ptr<u32>,
         cells2: alloc_zeroed(cap * 4) as ptr<u32>,
         cell_cap: cap,
@@ -258,7 +269,7 @@ export function life_new(seed: u32, cfg: LifeCfg) -> Life {
         ev_y: alloc_f32(L_EVENTS as i64),
         ev_k: alloc_i32(L_EVENTS as i64),
         ev_total: 0,
-        par_v: 0.0, par_w: 0.0, par_n: 0.0,
+        par_v: 0.0, par_w: 0.0, par_n: 0.0, par_nn: 0.0,
         profile: false, prof: alloc_zeroed(8 * 8) as ptr<f64>
     }
     life_smooth_fertility(&l)
@@ -336,8 +347,11 @@ export function life_cells_room(l: ptr<Life>, need: i32) -> void {
 # Develop slot i into the arena and set its phenotype.
 export function life_express(l: ptr<Life>, i: i32) -> void {
     life_cells_room(l, DEV_LIST)
-    let n: i32 = express(l.cr, l.genome, l.brain, l.looks, i, l.cfg.mode, l.cfg.dims, &l.expr,
+    let n: i32 = express(l.cr, l.genome, l.brain, l.looks, l.nets, i, l.cfg.mode, l.cfg.dims, &l.expr,
                          l.cells, l.cell_used)
+    for k in 0 to NEUR_MAX {
+        l.nstate[i * NEUR_MAX + k] = 0.0
+    }
     l.cell_used = l.cell_used + n
     # Resistance to toxin has a running cost in every mode.
     l.cr[i].upkeep = l.cr[i].upkeep + 1.5 * l.cr[i].resist
@@ -511,6 +525,8 @@ export function life_act(l: ptr<Life>) -> void {
     let n: i32 = l.n
     let cr: ptr<Creature> = l.cr
     let brain: ptr<f32> = l.brain
+    let nets: ptr<u8> = l.nets
+    let nstate: ptr<f32> = l.nstate
     let food: ptr<f32> = l.env.food
     let det: ptr<f32> = l.det
     let lightmap: ptr<f32> = l.lightmap
@@ -626,8 +642,10 @@ export function life_act(l: ptr<Life>) -> void {
         cr[i].h1 = hid[1]
         cr[i].h2 = hid[2]
         cr[i].h3 = hid[3]
-        let turn: f32 = brain_turn(brain, i * BRAIN_W, inp, hid)
-        let thrust: f32 = brain_thrust(brain, i * BRAIN_W, inp, hid)
+        let extra: array<f32, 2> = [0.0, 0.0]
+        brain_net(nets, i * NETX, inp, hid, nstate, i * NEUR_MAX, extra)
+        let turn: f32 = brain_turn(brain, i * BRAIN_W, inp, hid, extra[0])
+        let thrust: f32 = brain_thrust(brain, i * BRAIN_W, inp, hid, extra[1])
         cr[i].turn = turn
         cr[i].thrust = thrust
         let nh: f32 = h + 0.6 * turn + 0.1 * (rng_unit(&st) - 0.5)
@@ -883,6 +901,7 @@ export function life_reproduce(l: ptr<Life>) -> i32 {
                     l.par_v = l.par_v + (cr[i].vmax as f64) + (cr[mate].vmax as f64)
                     l.par_w = l.par_w + (cr[i].width as f64) + (cr[mate].width as f64)
                     l.par_n = l.par_n + 2.0
+                    l.par_nn = l.par_nn + (cr[i].neurons as f64) + (cr[mate].neurons as f64)
                 } else {
                     # Stillborn: its cells are dropped from the arena.
                     l.cell_used = cr[c].boff
@@ -949,6 +968,10 @@ export function life_compact(l: ptr<Life>, total: i32) -> void {
     let br2: ptr<f32> = l.brain2
     let lk: ptr<Morph> = l.looks
     let lk2: ptr<Morph> = l.looks2
+    let nt: ptr<u8> = l.nets
+    let nt2: ptr<u8> = l.nets2
+    let ns: ptr<f32> = l.nstate
+    let ns2: ptr<f32> = l.nstate2
     let cells: ptr<u32> = l.cells
     let cells2: ptr<u32> = l.cells2
     let newoff: ptr<i32> = l.fill
@@ -970,9 +993,16 @@ export function life_compact(l: ptr<Life>, total: i32) -> void {
                 let pd: i32 = gd + L_FIXED + hh * DEVH
                 let words: i32 = 1 + 2 * (g[ps] as i32)
                 for k in 0 to words { g2[pd + k] = g[ps + k] }
+                let qs: i32 = gs + L_FIXED + 2 * DEVH + hh * NEUH
+                let qd: i32 = gd + L_FIXED + 2 * DEVH + hh * NEUH
+                let nwords: i32 = 1 + 2 * (g[qs] as i32)
+                for k in 0 to nwords { g2[qd + k] = g[qs + k] }
             }
             for k in 0 to BRAIN_W { br2[d * BRAIN_W + k] = br[i * BRAIN_W + k] }
             lk2[d] = lk[i]
+            let nk: i32 = nt[i * NETX] as i32
+            for k in 0 to 1 + nk * NEUR_FIELDS { nt2[d * NETX + k] = nt[i * NETX + k] }
+            for k in 0 to nk { ns2[d * NEUR_MAX + k] = ns[i * NEUR_MAX + k] }
         }
     }
     l.cr = cr2
@@ -983,6 +1013,10 @@ export function life_compact(l: ptr<Life>, total: i32) -> void {
     l.brain2 = br
     l.looks = lk2
     l.looks2 = lk
+    l.nets = nt2
+    l.nets2 = nt
+    l.nstate = ns2
+    l.nstate2 = ns
     l.cells = cells2
     l.cells2 = cells
     l.cell_used = used

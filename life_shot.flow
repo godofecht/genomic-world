@@ -68,10 +68,12 @@ function step_census(l: ptr<Life>, cs: ptr<Census>) -> void {
     if (l.tick % (64 as u32)) == (0 as u32) {
         census_take(cs, l.cr, l.n)
         census_genomes(cs, l.cr, l.genome, l.n)
+        census_selection_net(cs, l.par_nn, l.par_n)
         census_selection(cs, l.par_v, l.par_w, l.par_n, l.fluid.strength)
         l.par_v = 0.0
         l.par_w = 0.0
         l.par_n = 0.0
+        l.par_nn = 0.0
         census_record(cs, l.n)
     }
 }

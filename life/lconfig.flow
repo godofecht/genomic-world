@@ -11,14 +11,21 @@ const LIFE_MAX: i32 = 32768
 # identities can grow without a set limit; DEVG_MAX is only the room
 # allocated per haplotype.
 #
+# A third part is the brain's own program: a variable number of neuron
+# genes, two words each, added to the fixed core of the brain. Neurons are
+# inserted, duplicated and deleted, so network size and wiring evolve.
+#
 # Words per organism: [fixed maternal 20][fixed paternal 20]
 #                     [program maternal: length, genes][program paternal]
+#                     [neurons maternal: length, genes][neurons paternal]
 const L_CHROMS: i32 = 20
 const L_FIXED: i32 = 40
 const L_LOCI: i32 = 640
 const DEVG_MAX: i32 = 48
 const DEVH: i32 = 97
-const L_WORDS: i32 = 234
+const NEUR_MAX: i32 = 32
+const NEUH: i32 = 65
+const L_WORDS: i32 = 364
 
 # Expressed program per organism: length word plus genes.
 const DEVX_WORDS: i32 = 97

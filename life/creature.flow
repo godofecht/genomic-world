@@ -30,7 +30,7 @@ extern {
     function sqrtf(x: f32) -> f32
 }
 
-# 40 four-byte fields: CR_BYTES must match. h0-h3 are the hidden neurons'
+# 41 four-byte fields: CR_BYTES must match. h0-h3 are the hidden neurons'
 # state; thrust and turn are the last motor command, kept for the viewer.
 struct Creature {
     px: f32,
@@ -68,6 +68,7 @@ struct Creature {
     gen: i32,
     boff: i32,
     bn: i32,
+    neurons: i32,
     seed: u32,
     col: u32,
     plan: u32,
@@ -75,7 +76,7 @@ struct Creature {
     sig1: u32
 }
 
-const CR_BYTES: i64 = 160
+const CR_BYTES: i64 = 164
 
 # Morphological genes, decoded. Fractions are in [0, 1]; counts are small
 # integers.
@@ -189,11 +190,12 @@ export function dev_rounds(g: ptr<u32>, gb: i32) -> i32 {
 # Express slot i: decode the brain, build the body into cells[off..], set
 # the record's phenotype, and keep the decoded morphology in looks[i] for
 # the viewer. Returns the number of body cells.
-export function express(c: ptr<Creature>, g: ptr<u32>, brain: ptr<f32>, looks: ptr<Morph>, i: i32,
-                        mode: i32, dims: i32, x: ptr<Expr>, cells: ptr<u32>, off: i32) -> i32 {
+export function express(c: ptr<Creature>, g: ptr<u32>, brain: ptr<f32>, looks: ptr<Morph>, nets: ptr<u8>,
+                        i: i32, mode: i32, dims: i32, x: ptr<Expr>, cells: ptr<u32>, off: i32) -> i32 {
     let gb: i32 = i * L_WORDS
     let m: Morph = morph_decode(g, gb)
     looks[i] = m
+    c[i].neurons = neur_express(g, gb, nets, i * NETX)
     let mut n: i32 = 1
     if mode == MODE_MORPH {
         cells[off] = cell_pack(0, 0, 0, CELL_CORE, 8, 0)

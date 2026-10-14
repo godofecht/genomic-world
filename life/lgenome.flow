@@ -86,11 +86,15 @@ const LOC_THR: i32 = 576
 const LOC_MARK: i32 = 588
 
 # Program genes: crossover chance per meiosis, chance that a crossover is
-# misaligned, and duplication and deletion rates per gamete.
+# misaligned, and duplication and deletion rates per gamete. Neuron genes
+# use the same, plus insertion of a new, nearly silent neuron.
 const PROG_XO: f32 = 0.4
 const PROG_UNEQUAL: f32 = 0.08
 const PROG_DUP: f32 = 0.004
 const PROG_DEL: f32 = 0.004
+const NEUR_DUP: f32 = 0.006
+const NEUR_DEL: f32 = 0.006
+const NEUR_INS: f32 = 0.02
 
 # n bits (n <= 16) starting at locus pos of one homolog's fixed part
 # starting at word base. Handles a field that straddles two words.
@@ -184,6 +188,90 @@ export function l_set_weight(g: ptr<u32>, base: i32, k: i32, w: f32) -> void {
 # Word address of homolog h's program within the genome at gb.
 export function prog_at(gb: i32, h: i32) -> i32 {
     return gb + L_FIXED + h * DEVH
+}
+
+# Word address of homolog h's neuron list.
+export function neur_at(gb: i32, h: i32) -> i32 {
+    return gb + L_FIXED + 2 * DEVH + h * NEUH
+}
+
+# ---------------------------------------------------------------------------
+# Neuron genes
+#
+#   word 0  bits  0-1  activation: 0 tanh, 1 logistic, 2 rectifier
+#                      (clipped at 1), 3 sine (an oscillator when it feeds
+#                      itself)
+#           bits  2-7  bias           } 6-bit weights: (v - 31.5) / 8,
+#           bits  8-13 self weight    } so -3.9 to 3.9
+#           bits 14-19 source 1, bits 20-25 weight 1
+#           bits 26-31 source 2
+#   word 1  bits  0-5  weight 2
+#           bits  6-11 source 3, bits 12-17 weight 3
+#           bits 18-23 weight onto turning, bits 24-29 onto thrust
+#           bits 30-31 neutral
+#
+# A source below BRAIN_IN is a sense; the next BRAIN_HID are the core's
+# hidden neurons; beyond that, an evolved neuron (index modulo the
+# network's size, so a source can name any of them however many there
+# are). Of two alleles, activation and sources take the larger value and
+# weights the mean, so expression is symmetric in the homologs.
+# ---------------------------------------------------------------------------
+
+export function nw(v: i32) -> f32 {
+    return ((v as f32) - 31.5) / 8.0
+}
+
+function nfield(g: ptr<u32>, p: i32, k: i32, which: i32) -> i32 {
+    let w0: u32 = g[p + 1 + 2 * k]
+    let w1: u32 = g[p + 2 + 2 * k]
+    if which == 0 { return gene_field(w0, 0, 2) }
+    if which == 1 { return gene_field(w0, 2, 6) }
+    if which == 2 { return gene_field(w0, 8, 6) }
+    if which == 3 { return gene_field(w0, 14, 6) }
+    if which == 4 { return gene_field(w0, 20, 6) }
+    if which == 5 { return gene_field(w0, 26, 6) }
+    if which == 6 { return gene_field(w1, 0, 6) }
+    if which == 7 { return gene_field(w1, 6, 6) }
+    if which == 8 { return gene_field(w1, 12, 6) }
+    if which == 9 { return gene_field(w1, 18, 6) }
+    return gene_field(w1, 24, 6)
+}
+
+# Expressed neurons into out[ob..], a byte each: count, then for each
+# neuron 11 values (activation, bias, self, source and weight three times,
+# turn, thrust), as raw field values.
+const NEUR_FIELDS: i32 = 11
+const NETX: i32 = 353
+
+export function neur_express(g: ptr<u32>, gb: i32, out: ptr<u8>, ob: i32) -> i32 {
+    let pa: i32 = neur_at(gb, 0)
+    let pb: i32 = neur_at(gb, 1)
+    let ka: i32 = g[pa] as i32
+    let kb: i32 = g[pb] as i32
+    let mut k: i32 = ka
+    if kb > k { k = kb }
+    out[ob] = k as u8
+    for i in 0 to k {
+        for fld in 0 to NEUR_FIELDS {
+            let mut v: i32 = 0
+            if i < ka and i < kb {
+                let a: i32 = nfield(g, pa, i, fld)
+                let b: i32 = nfield(g, pb, i, fld)
+                if fld == 0 or fld == 3 or fld == 5 or fld == 7 {
+                    v = a
+                    if b > a { v = b }
+                } else {
+                    v = (a + b) / 2
+                }
+            } elif i < ka {
+                v = nfield(g, pa, i, fld)
+            } else {
+                v = nfield(g, pb, i, fld)
+            }
+            out[ob + 1 + i * NEUR_FIELDS + fld] = v as u8
+        }
+    }
+    return k
 }
 
 export function gene_field(w: u32, shift: i32, width: i32) -> i32 {
@@ -309,6 +397,15 @@ export function sig_distance(a: u64, b: u64) -> i32 {
 # One gamete's program: from homologs at addresses sa and sb into address
 # d. Source and destination are different organisms' slots.
 function prog_gamete(g: ptr<u32>, sa: i32, sb: i32, d: i32, st: ptr<u32>, mu: f32) -> void {
+    list_gamete(g, sa, sb, d, st, mu, DEVG_MAX, 1, PROG_DUP, PROG_DEL, 0.0)
+}
+
+# A gamete's copy of a gene list (developmental program or neurons): at
+# most one crossover, sometimes misaligned; point mutations at mu per bit;
+# duplication, deletion, and insertion of a new neuron (ins > 0 only for
+# neuron lists). Lists keep between min_len and max_len genes.
+function list_gamete(g: ptr<u32>, sa: i32, sb: i32, d: i32, st: ptr<u32>, mu: f32,
+                     max_len: i32, min_len: i32, p_dup: f32, p_del: f32, p_ins: f32) -> void {
     let mut first: i32 = sa
     let mut second: i32 = sb
     if (rng_next(st) & (1 as u32)) == (1 as u32) {
@@ -329,14 +426,14 @@ function prog_gamete(g: ptr<u32>, sa: i32, sb: i32, d: i32, st: ptr<u32>, mu: f3
         if j < 0 { j = 0 }
         if j > k2 { j = k2 }
         for q in 0 to i {
-            if n < DEVG_MAX {
+            if n < max_len {
                 g[d + 1 + 2 * n] = g[first + 1 + 2 * q]
                 g[d + 2 + 2 * n] = g[first + 2 + 2 * q]
                 n = n + 1
             }
         }
         for q in j to k2 {
-            if n < DEVG_MAX {
+            if n < max_len {
                 g[d + 1 + 2 * n] = g[second + 1 + 2 * q]
                 g[d + 2 + 2 * n] = g[second + 2 + 2 * q]
                 n = n + 1
@@ -349,7 +446,7 @@ function prog_gamete(g: ptr<u32>, sa: i32, sb: i32, d: i32, st: ptr<u32>, mu: f3
         }
         n = k1
     }
-    if n == 0 {
+    if n == 0 and min_len > 0 and k1 > 0 {
         # Never empty: keep the first homolog's first gene.
         g[d + 1] = g[first + 1]
         g[d + 2] = g[first + 2]
@@ -357,14 +454,15 @@ function prog_gamete(g: ptr<u32>, sa: i32, sb: i32, d: i32, st: ptr<u32>, mu: f3
     }
     # Point mutations at mu per bit.
     let lam: f32 = mu * ((64 * n) as f32)
-    let muts: i32 = gen_poisson(st, lam, expf(0.0 - lam))
+    let mut muts: i32 = 0
+    if n > 0 { muts = gen_poisson(st, lam, expf(0.0 - lam)) }
     for m in 0 to muts {
         let bit: i32 = rng_below(st, 64 * n)
         let w: i32 = d + 1 + (bit >> 5)
         g[w] = g[w] ^ ((1 as u32) << ((bit & 31) as u32))
     }
     # Duplication: a copy of gene q goes in right after it.
-    if n < DEVG_MAX and rng_unit(st) < PROG_DUP {
+    if n > 0 and n < max_len and rng_unit(st) < p_dup {
         let q: i32 = rng_below(st, n)
         let mut t: i32 = n
         while t > q + 1 {
@@ -376,14 +474,24 @@ function prog_gamete(g: ptr<u32>, sa: i32, sb: i32, d: i32, st: ptr<u32>, mu: f3
         g[d + 2 + 2 * (q + 1)] = g[d + 2 + 2 * q]
         n = n + 1
     }
-    # Deletion of a gene other than the first.
-    if n > 1 and rng_unit(st) < PROG_DEL {
-        let q: i32 = 1 + rng_below(st, n - 1)
+    # Deletion of a gene (never the first of a developmental program).
+    if n > min_len and n > 0 and rng_unit(st) < p_del {
+        let q: i32 = min_len + rng_below(st, n - min_len)
         for t in q to n - 1 {
             g[d + 1 + 2 * t] = g[d + 3 + 2 * t]
             g[d + 2 + 2 * t] = g[d + 4 + 2 * t]
         }
         n = n - 1
+    }
+    # Insertion: a new neuron with random wiring whose outputs start near
+    # zero, so it is close to neutral until selection finds a use for it.
+    if n < max_len and p_ins > 0.0 and rng_unit(st) < p_ins {
+        let mut w0: u32 = rng_word(st)
+        let mut w1: u32 = rng_word(st)
+        w1 = (w1 & invert32(low_mask(12) << (18 as u32))) | ((31 as u32) << (18 as u32)) | ((32 as u32) << (24 as u32))
+        g[d + 1 + 2 * n] = w0
+        g[d + 2 + 2 * n] = w1
+        n = n + 1
     }
     g[d] = n as u32
 }
@@ -403,6 +511,8 @@ export function l_gamete(g: ptr<u32>, sb: i32, db: i32, h: i32,
         g[hb + w] = g[hb + w] ^ ((1 as u32) << ((locus & 31) as u32))
     }
     prog_gamete(g, prog_at(sb, 0), prog_at(sb, 1), prog_at(db, h), st, mu)
+    list_gamete(g, neur_at(sb, 0), neur_at(sb, 1), neur_at(db, h), st, mu, NEUR_MAX, 0,
+                NEUR_DUP, NEUR_DEL, NEUR_INS)
 }
 
 export function l_cross(g: ptr<u32>, mom: i32, dad: i32, child: i32,

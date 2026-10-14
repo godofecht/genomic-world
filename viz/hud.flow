@@ -317,8 +317,8 @@ function hud_right(f: Frame, h: ptr<Hud>, l: ptr<Life>, cs: ptr<Census>, preset:
     sx = stat(f, h, sx, y, "Speed", num(cs.mean_speed as f64, 2))
     y = y + px(h, 34.0)
     sx = stat(f, h, ix, y, "Program genes", num(cs.mean_prog as f64, 2))
-    sx = stat(f, h, sx, y, "Most", num(cs.max_prog as f64, -1))
-    sx = stat(f, h, sx, y, "Defence", num(cs.mean_armor as f64, 2))
+    sx = stat(f, h, sx, y, "Neurons", num(cs.mean_neur as f64, 2))
+    sx = stat(f, h, sx, y, "Most", num(cs.max_neur as f64, -1))
     y = y + px(h, 36.0)
     let ch: i32 = px(h, 34.0)
     # The experiment's own measure.
@@ -336,10 +336,12 @@ function hud_right(f: Frame, h: ptr<Hud>, l: ptr<Life>, cs: ptr<Census>, preset:
         chart(f, cs, cs.hist_x, ix, y, iw, ch, 0.0, 256.0, 0xf2d36e, 1.4 * h.u)
         y = y + ch + px(h, 10.0)
     } else {
-        let a5: i32 = text(f, h, ix, y, "Program genes, mean (gene duplication)", FACE_TEXT, 10.5, DIM)
+        let a5: i32 = text(f, h, ix, y, "Evolved neurons (blue) and program genes, means", FACE_TEXT, 10.5, DIM)
         y = y + px(h, 14.0)
         fb_rect(f, ix, y, iw, ch, 0x14171c, 255)
-        chart(f, cs, cs.hist_prog, ix, y, iw, ch, 0.0, max_hist(cs, cs.hist_prog) * 1.2 + 1.0, 0x9fd0ff, 1.4 * h.u)
+        let top: f32 = hud_max(max_hist(cs, cs.hist_neur), max_hist(cs, cs.hist_prog)) * 1.2 + 1.0
+        chart(f, cs, cs.hist_prog, ix, y, iw, ch, 0.0, top, 0x6f6a62, 1.2 * h.u)
+        chart(f, cs, cs.hist_neur, ix, y, iw, ch, 0.0, top, 0x9fd0ff, 1.4 * h.u)
         y = y + ch + px(h, 10.0)
     }
     let a7: i32 = text(f, h, ix, y, "Selection on speed, parents minus all", FACE_TEXT, 10.5, DIM)
@@ -349,23 +351,41 @@ function hud_right(f: Frame, h: ptr<Hud>, l: ptr<Life>, cs: ptr<Census>, preset:
     chart(f, cs, cs.hist_selv, ix, y, iw, ch, -0.15, 0.15, 0xf08c46, 1.4 * h.u)
     y = y + ch + px(h, 20.0)
 
-    let a8: i32 = text(f, h, ix, y, "Commonest forms", FACE_BOLD, 12.5, INK)
-    y = y + px(h, 20.0)
     let tw: i32 = (iw - px(h, 8.0) * 3) / 4
     let th: i32 = tw + px(h, 30.0)
-    for k in 0 to BESTIARY {
-        let tx: i32 = ix + (k % 4) * (tw + px(h, 8.0))
-        let ty: i32 = y + (k / 4) * (th + px(h, 8.0))
-        if ty + th < f.h - px(h, 24.0) {
-            fb_panel(f, tx, ty, tw, th, 6.0 * h.u, 0x161a20, 255)
-            let i: i32 = cs.top[k]
-            if i >= 0 and i < l.n {
-                portrait(f, &h.dl, l, i, (tx as f32) + (tw as f32) * 0.5, (ty as f32) + (tw as f32) * 0.5, (tw as f32) * 0.86, look)
-                let b1: i32 = text(f, h, tx + px(h, 6.0), ty + tw + px(h, 1.0), num(cs.top_count[k] as f64, -1), FACE_MONO, 10.0, INK)
-                let b2: i32 = text(f, h, tx + px(h, 6.0), ty + tw + px(h, 14.0), role_name(l.cr, i), FACE_TEXT, 9.5, DIM)
-            }
+    let a8: i32 = text(f, h, ix, y, "Commonest forms", FACE_BOLD, 12.5, INK)
+    y = y + px(h, 20.0)
+    bestiary_row(f, h, l, ix, y, tw, th, cs.top, cs.top_count, look)
+    y = y + th + px(h, 14.0)
+    let a9: i32 = text(f, h, ix, y, "Rarest forms", FACE_BOLD, 12.5, INK)
+    y = y + px(h, 20.0)
+    bestiary_row(f, h, l, ix, y, tw, th, cs.rare, cs.rare_count, look)
+}
+
+# Four forms in tiles: portrait, count, role.
+function bestiary_row(f: Frame, h: ptr<Hud>, l: ptr<Life>, x: i32, y: i32, tw: i32, th: i32,
+                      who: ptr<i32>, count: ptr<i32>, look: Look) -> void {
+    if y + th >= f.h - px(h, 20.0) { return }
+    for k in 0 to 4 {
+        let tx: i32 = x + k * (tw + px(h, 8.0))
+        fb_panel(f, tx, y, tw, th, 6.0 * h.u, 0x161a20, 255)
+        let i: i32 = who[k]
+        if i >= 0 and i < l.n {
+            portrait(f, &h.dl, l, i, (tx as f32) + (tw as f32) * 0.5, (y as f32) + (tw as f32) * 0.5, (tw as f32) * 0.86, look)
+            let b1: i32 = text(f, h, tx + px(h, 6.0), y + tw + px(h, 1.0), num(count[k] as f64, -1), FACE_MONO, 10.0, INK)
+            let b2: i32 = text(f, h, tx + px(h, 6.0), y + tw + px(h, 14.0), role_name(l.cr, i), FACE_TEXT, 9.5, DIM)
         }
     }
+}
+
+function hud_min(a: f32, b: f32) -> f32 {
+    if a < b { return a }
+    return b
+}
+
+function hud_max(a: f32, b: f32) -> f32 {
+    if a > b { return a }
+    return b
 }
 
 function max_hist(cs: ptr<Census>, data: ptr<f32>) -> f32 {
@@ -489,6 +509,57 @@ function hud_inspector(f: Frame, h: ptr<Hud>, l: ptr<Life>, i: i32, look: Look) 
         fb_disc(f, bx1, hy, 5.0 * h.u, 0x2a3038, 255)
         fb_disc(f, bx1, hy, 5.0 * h.u * abs_f(act), wcol(act), 255)
     }
+    # The evolved network: its neurons in a grid between the core and the
+    # outputs, each wired as its gene says. Ring colour is the activation
+    # (tanh blue, logistic green, rectifier amber, sine violet), fill its
+    # current value.
+    let nb: i32 = i * NETX
+    let nk: i32 = l.nets[nb] as i32
+    for j in 0 to nk {
+        let f0: i32 = nb + 1 + j * NEUR_FIELDS
+        let ex: f32 = bx1 + 48.0 * h.u + ((j / 11) as f32) * 26.0 * h.u
+        let ey: f32 = (by as f32) + ((j % 11) as f32) * gap
+        for cc in 0 to 3 {
+            let src: i32 = l.nets[f0 + 3 + 2 * cc] as i32
+            let wv: f32 = nw(l.nets[f0 + 4 + 2 * cc] as i32)
+            if abs_f(wv) > 0.3 {
+                let mut sx2: f32 = bx0
+                let mut sy2: f32 = (by as f32) + (src as f32) * gap
+                if src >= BRAIN_IN and src < BRAIN_IN + BRAIN_HID {
+                    sx2 = bx1
+                    sy2 = (by as f32) + (2.5 + 2.0 * ((src - BRAIN_IN) as f32)) * gap
+                } elif src >= BRAIN_IN + BRAIN_HID {
+                    let q: i32 = (src - BRAIN_IN - BRAIN_HID) % nk
+                    sx2 = bx1 + 48.0 * h.u + ((q / 11) as f32) * 26.0 * h.u
+                    sy2 = (by as f32) + ((q % 11) as f32) * gap
+                }
+                fb_line(f, sx2, sy2, ex, ey, 0.35 * h.u * abs_f(wv), wcol(wv), 140)
+            }
+        }
+        for o in 0 to 2 {
+            let wv: f32 = nw(l.nets[f0 + 9 + o] as i32)
+            if abs_f(wv) > 0.3 {
+                let oy: f32 = (by as f32) + (3.0 + 3.0 * (o as f32)) * gap
+                fb_line(f, ex, ey, bx2, oy, 0.35 * h.u * abs_f(wv), wcol(wv), 170)
+            }
+        }
+    }
+    for j in 0 to nk {
+        let f0: i32 = nb + 1 + j * NEUR_FIELDS
+        let ex: f32 = bx1 + 48.0 * h.u + ((j / 11) as f32) * 26.0 * h.u
+        let ey: f32 = (by as f32) + ((j % 11) as f32) * gap
+        let act: i32 = l.nets[f0] as i32
+        let mut ring: i32 = 0x6ec8ff
+        if act == 1 { ring = 0x7ad27a }
+        if act == 2 { ring = 0xf2c46e }
+        if act == 3 { ring = 0xb48cff }
+        let v: f32 = l.nstate[i * NEUR_MAX + j]
+        fb_disc(f, ex, ey, 4.5 * h.u, 0x2a3038, 255)
+        fb_disc(f, ex, ey, 4.5 * h.u * hud_min(1.0, abs_f(v)), wcol(v), 255)
+        fb_ring(f, ex, ey, 4.5 * h.u, 1.2 * h.u, ring, 230)
+    }
+    let a11: i32 = text(f, h, (bx1 as i32) + px(h, 36.0), by - px(h, 16.0), num_fix(nk as f64, -1, "evolved ", ""), FACE_TEXT, 9.0, FAINT)
+
     let outs: array<f32, 2> = [c.turn, c.thrust]
     for o in 0 to 2 {
         let oy: f32 = (by as f32) + (3.0 + 3.0 * (o as f32)) * gap

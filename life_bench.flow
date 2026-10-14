@@ -32,7 +32,7 @@ function main() -> i32 {
     printf("%s, mode %d, %dD bodies\n", preset_name(preset), mode, dims)
     let mut l: Life = life_create(params_seed(20261014 as u32), preset, mode, dims)
     let mut cs: Census = census_new()
-    printf(" tick     n  births  kills  plans  species  cells  eyes  photo  speed  armor  pred  auto  mixo  E_graze E_scav E_photo E_meat  current  S_speed  max gen  ms/tick  prog maxprog maxcells resist maxres  mean_x\n")
+    printf(" tick     n  births  kills  plans  species  cells  eyes  photo  speed  armor  pred  auto  mixo  E_graze E_scav E_photo E_meat  current  S_speed  max gen  ms/tick  prog maxprog maxcells resist maxres  mean_x  neurons maxneur S_neur\n")
     let mut every: i32 = 500
     let ev: ptr<u8> = getenv("GW_EVERY")
     if ev != null { every = atoi(ev) }
@@ -48,20 +48,23 @@ function main() -> i32 {
         if t % every == 0 {
             let now: i64 = xp_now_ns()
             census_take(&cs, l.cr, l.n)
+            let par_n_saved: f64 = l.par_n
             census_selection(&cs, l.par_v, l.par_w, l.par_n, l.fluid.strength)
             l.par_v = 0.0
             l.par_w = 0.0
             l.par_n = 0.0
             census_genomes(&cs, l.cr, l.genome, l.n)
+            census_selection_net(&cs, l.par_nn, par_n_saved)
+            l.par_nn = 0.0
             census_record(&cs, l.n)
-            printf("%5d %5d %7d %6d %6d %8d %6.2f %5.2f %6.2f %6.2f %6.2f %5.3f %5.3f %5.3f  %7.3f %6.3f %7.3f %6.3f %8.2f %8.3f %8d %8.3f %5.2f %7d %8d %6.3f %6.3f %7.1f\n",
+            printf("%5d %5d %7d %6d %6d %8d %6.2f %5.2f %6.2f %6.2f %6.2f %5.3f %5.3f %5.3f  %7.3f %6.3f %7.3f %6.3f %8.2f %8.3f %8d %8.3f %5.2f %7d %8d %6.3f %6.3f %7.1f %8.2f %7d %7.3f\n",
                    t, l.n, l.births, l.kills, cs.plans, cs.morphospecies,
                    cs.mean_cells as f64, cs.mean_eyes as f64, cs.mean_photo as f64, cs.mean_speed as f64,
                    cs.mean_armor as f64, cs.predators as f64, cs.autotrophs as f64, cs.mixotrophs as f64,
                    cs.f_graze as f64, cs.f_scav as f64, cs.f_photo as f64, cs.f_meat as f64,
                    cs.strength as f64, cs.sel_v as f64, cs.max_gen, ((now - tl) as f64) / 1000000.0 / (every as f64),
                    cs.mean_prog as f64, cs.max_prog, cs.max_cells, cs.mean_resist as f64, cs.max_resist as f64,
-                   cs.mean_x as f64)
+                   cs.mean_x as f64, cs.mean_neur as f64, cs.max_neur, cs.sel_n as f64)
             tl = xp_now_ns()
         }
         if l.n == 0 {

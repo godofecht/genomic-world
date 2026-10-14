@@ -130,6 +130,14 @@ footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
 </section>
 
 <section>
+  <h2>Evolved networks, and the rarest forms</h2>
+  <div class="hero">
+    <img src="media/network.png" alt="The inspector on a predator, showing its brain with three evolved neurons wired into turning and thrust, and the panel's commonest and rarest forms" loading="lazy">
+  </div>
+  <p class="caption">A followed predator at tick 6,000. Its brain: senses on the left, the fixed core, then three evolved neurons (rings coloured by activation), wired into turning and thrust. On the right, the commonest forms and the rarest, each held by one organism.</p>
+</section>
+
+<section>
   <h2>Three ways to build an organism</h2>
   <div class="grid">
     <div class="card">
@@ -226,7 +234,7 @@ footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
   <ul>
     <li><b>Genome.</b> 640 fixed loci per haplotype on twenty chromosomes, recombining by Haldane's map, plus a developmental program of cell-identity genes. Programs cross over at most once per meiosis, sometimes misaligned by a gene, which duplicates or deletes one, as unequal crossing-over does.</li>
     <li><b>Development.</b> Bodies grow cell by cell in 2D or 3D and are mirrored across the midline. A gene that grows its own identity repeats a segment; a timer stops it. Random programs grow bodies of up to 8,965 cells in tests.</li>
-    <li><b>Brain.</b> Ten inputs (food ahead and to each side, prey, threat, a possible mate, energy, the light gradient, the current across the body, a bias), four hidden neurons that feed back on themselves, two outputs. Every weight is genetic.</li>
+    <li><b>Brain.</b> A fixed genetic core (ten senses, four self-feeding hidden neurons, turning and thrust) and an evolved network on top: one gene per neuron, with its activation (tanh, logistic, rectifier or sine), bias, self-connection, three incoming connections and its pull on the outputs. Neurons are inserted, duplicated, deleted and rewired, so the network's size and wiring evolve. Founders have none. In a 30,000-tick ocean run the mean network grew to 11.6 neurons, the largest to 18; in Gause's dish parents carried more neurons than average, so larger networks were selected.</li>
     <li><b>Ecology.</b> Grazing on algae that regrow; photosynthesis that shares light and draws nutrient; detritus that is scavenged and returned to the water as nutrient; predation by attack against defence; toxin and the cost of resisting it.</li>
     <li><b>Water.</b> Stam's stable fluids on a 128 by 128 grid with walls; organisms drift with the current and swim against drag that depends on body shape.</li>
     <li><b>Determinism.</b> Every random draw is a hash of an organism's seed, the tick and a purpose, so runs give the same state on any number of threads.</li>

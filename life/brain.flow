@@ -18,12 +18,22 @@
 #
 # Weights come from the genome (lgenome.flow) and are decoded once at birth
 # into the brain array; the layout is in lconfig.flow.
+#
+# On top of this fixed core sits an evolved network: a variable number of
+# neurons from the genome's neuron genes, each with an activation, a bias,
+# a self-connection, three incoming connections (from senses, the core's
+# hidden neurons or other evolved neurons) and weights onto turning and
+# thrust. Evolved neurons update together from the senses, the core's new
+# hidden state and their own state from the last tick, so loops among them
+# carry information forward in time.
 
 import .lconfig
+import .lgenome
 
 extern {
     function expf(x: f32) -> f32
     function tanhf(x: f32) -> f32
+    function sinf(x: f32) -> f32
 }
 
 export function brain_w_out(o: i32, i: i32) -> i32 {
@@ -57,13 +67,61 @@ function brain_sum(w: ptr<f32>, wb: i32, o: i32, x: ptr<f32>, h: ptr<f32>) -> f3
     return s
 }
 
-export function brain_turn(w: ptr<f32>, wb: i32, x: ptr<f32>, h: ptr<f32>) -> f32 {
-    let s: f32 = brain_sum(w, wb, 0, x, h)
+# Step the evolved network. net[nb..] is the expressed network (count,
+# then 11 raw fields per neuron), state[sb..] its neurons' last values,
+# updated in place. Adds each neuron's pull on turning and thrust to
+# out[0] and out[1].
+export function brain_net(net: ptr<u8>, nb: i32, x: ptr<f32>, h: ptr<f32>, state: ptr<f32>, sb: i32,
+                          out: ptr<f32>) -> void {
+    let k: i32 = net[nb] as i32
+    if k <= 0 { return }
+    let fresh: array<f32, 32> = [0.0, 0.0, 0.0, 0.0]
+    for j in 0 to k {
+        let f: i32 = nb + 1 + j * NEUR_FIELDS
+        let mut s: f32 = nw(net[f + 1] as i32) + nw(net[f + 2] as i32) * state[sb + j]
+        for c in 0 to 3 {
+            let src: i32 = net[f + 3 + 2 * c] as i32
+            let wt: f32 = nw(net[f + 4 + 2 * c] as i32)
+            let mut v: f32 = 0.0
+            if src < BRAIN_IN {
+                v = x[src]
+            } elif src < BRAIN_IN + BRAIN_HID {
+                v = h[src - BRAIN_IN]
+            } else {
+                v = state[sb + ((src - BRAIN_IN - BRAIN_HID) % k)]
+            }
+            s = s + wt * v
+        }
+        let act: i32 = net[f] as i32
+        let mut y: f32 = 0.0
+        if act == 0 {
+            y = tanhf(s)
+        } elif act == 1 {
+            y = 1.0 / (1.0 + expf(0.0 - s))
+        } elif act == 2 {
+            y = s
+            if y < 0.0 { y = 0.0 }
+            if y > 1.0 { y = 1.0 }
+        } else {
+            y = sinf(s)
+        }
+        fresh[j] = y
+    }
+    for j in 0 to k {
+        let f: i32 = nb + 1 + j * NEUR_FIELDS
+        state[sb + j] = fresh[j]
+        out[0] = out[0] + nw(net[f + 9] as i32) * fresh[j]
+        out[1] = out[1] + nw(net[f + 10] as i32) * fresh[j]
+    }
+}
+
+export function brain_turn(w: ptr<f32>, wb: i32, x: ptr<f32>, h: ptr<f32>, extra: f32) -> f32 {
+    let s: f32 = brain_sum(w, wb, 0, x, h) + extra
     if s > 1.0 { return 1.0 }
     if s < -1.0 { return -1.0 }
     return s
 }
 
-export function brain_thrust(w: ptr<f32>, wb: i32, x: ptr<f32>, h: ptr<f32>) -> f32 {
-    return 1.0 / (1.0 + expf(0.0 - brain_sum(w, wb, 1, x, h)))
+export function brain_thrust(w: ptr<f32>, wb: i32, x: ptr<f32>, h: ptr<f32>, extra: f32) -> f32 {
+    return 1.0 / (1.0 + expf(0.0 - brain_sum(w, wb, 1, x, h) - extra))
 }

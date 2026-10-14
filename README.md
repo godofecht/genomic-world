@@ -312,13 +312,32 @@ same plane; their frontal area sets their drag.
 
 ### Behaviour
 
-A brain with ten inputs, four hidden neurons and two outputs. Inputs: food
-ahead and to each side, the nearest prey and threat, the nearest possible
-mate, its own energy, the light gradient along its heading, the current
-across its body (a lateral line), and a bias. Each hidden neuron feeds
-back on itself, so it can hold a value over time. Outputs are turning and
-thrust. All 72 weights are genetic. The founders' hidden layer is silent;
-anything it does has evolved.
+Each brain has two parts, both genetic.
+
+- A fixed core: ten inputs, four hidden neurons that feed back on
+  themselves, two outputs, 72 weights. Inputs: food ahead and to each
+  side, the nearest prey and threat, the nearest possible mate, its own
+  energy, the light gradient along its heading, the current across its
+  body (a lateral line), and a bias. Outputs are turning and thrust.
+- An evolved network on top of it: a third gene list in the genome, one
+  gene per neuron. A neuron gene sets its activation (tanh, logistic, a
+  clipped rectifier, or sine, which feeding itself makes a rhythm
+  generator), a bias, a self-connection, three incoming connections (from
+  senses, the core's hidden neurons or other evolved neurons, by index
+  modulo the network's size) and its pull on turning and thrust. Neurons
+  are added by an insertion mutation that starts nearly silent, as NEAT
+  adds nodes, and are duplicated, deleted and rewired like any gene list;
+  misaligned crossing-over adds or drops them too. Evolved neurons update
+  together from the senses, the core's new state and their own last
+  values, so loops among them carry information forward.
+
+The founders have no evolved neurons and a silent hidden core, so
+anything a network does has evolved. In a 30,000-tick ocean run the mean
+network grew from 0.7 neurons to 11.6, the largest to 18. In Gause's dish
+with a refuge the mean reached 2.2, and from tick 12,000 parents carried
+0.27 to 0.68 more neurons than the population average: larger networks
+were being selected. Part of the growth in the ocean may be mutation
+pressure, since insertion is more frequent than deletion.
 
 ### Ecology
 
@@ -398,8 +417,11 @@ GPU, and the overlay, drawn at full resolution with CoreText type.
 - Styles: natural colour, bright-field (pale field, translucent cells, as
   under a microscope), dark-field (black field, cells lit at the edges).
 - The inspector shows a followed organism: portrait, life, energy, its
-  brain with live activity, and its developmental program gene by gene,
-  or in morphology mode its trait values.
+  brain with live activity (the core, and every evolved neuron with its
+  wiring, activation and current value), and its developmental program
+  gene by gene, or in morphology mode its trait values.
+- The panel shows the commonest forms and the rarest: forms held by the
+  fewest organisms, the most complex first among equals.
 
 | Key | Action |
 |---|---|

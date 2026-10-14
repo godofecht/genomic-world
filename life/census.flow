@@ -45,6 +45,11 @@ struct Census {
     max_resist: f32,
     mean_prog: f32,
     max_prog: i32,
+    mean_neur: f32,
+    max_neur: i32,
+    # the least common forms: an example of each and its count
+    rare: ptr<i32>,
+    rare_count: ptr<i32>,
     mean_x: f32,
     mean_eyes: f32,
     mean_speed: f32,
@@ -53,6 +58,7 @@ struct Census {
     mean_width: f32,
     sel_v: f32,
     sel_w: f32,
+    sel_n: f32,
     strength: f32,
     hist_strength: ptr<f32>,
     hist_selv: ptr<f32>,
@@ -67,6 +73,7 @@ struct Census {
     hist_meat_e: ptr<f32>,
     hist_resist: ptr<f32>,
     hist_prog: ptr<f32>,
+    hist_neur: ptr<f32>,
     hist_x: ptr<f32>,
     hist_head: i32,
     hist_count: i32
@@ -99,8 +106,10 @@ export function census_new() -> Census {
         grazers: 0.0, mean_photo: 0.0, e_graze: 0.0, e_scav: 0.0, e_photo: 0.0, e_meat: 0.0,
         f_graze: 0.0, f_scav: 0.0, f_photo: 0.0, f_meat: 0.0, mean_cells: 0.0,
         max_cells: 0, mean_resist: 0.0, max_resist: 0.0, mean_prog: 0.0, max_prog: 0, mean_x: 0.0,
+        mean_neur: 0.0, max_neur: 0,
+        rare: alloc_i32(BESTIARY as i64), rare_count: alloc_i32(BESTIARY as i64),
         mean_eyes: 0.0, mean_speed: 0.0, mean_armor: 0.0, max_gen: 0,
-        mean_width: 0.0, sel_v: 0.0, sel_w: 0.0, strength: 0.0,
+        mean_width: 0.0, sel_v: 0.0, sel_w: 0.0, sel_n: 0.0, strength: 0.0,
         hist_strength: alloc_f32(L_HIST as i64),
         hist_selv: alloc_f32(L_HIST as i64),
         hist_width: alloc_f32(L_HIST as i64),
@@ -114,6 +123,7 @@ export function census_new() -> Census {
         hist_meat_e: alloc_f32(L_HIST as i64),
         hist_resist: alloc_f32(L_HIST as i64),
         hist_prog: alloc_f32(L_HIST as i64),
+        hist_neur: alloc_f32(L_HIST as i64),
         hist_x: alloc_f32(L_HIST as i64),
         hist_head: 0, hist_count: 0
     }
@@ -188,6 +198,33 @@ export function census_take(cs: ptr<Census>, cr: ptr<Creature>, n: i32) -> void 
         cs.top[b] = -1
         cs.top_count[b] = 0
     }
+    # The rarest forms: fewest organisms first; among equals, the more
+    # complex body, which is the more interesting oddity.
+    for b in 0 to BESTIARY {
+        cs.rare[b] = -1
+        cs.rare_count[b] = 0
+    }
+    for k in 0 to PLAN_SLOTS {
+        let c: i32 = cs.counts[k]
+        if c > 0 {
+            let ex: i32 = cs.example[k]
+            let score: i32 = c * 4096 - cr[ex].cells
+            let mut p: i32 = BESTIARY
+            while p > 0 and (cs.rare[p - 1] < 0 or score < cs.rare_count[p - 1] * 4096 - cr[cs.rare[p - 1]].cells) {
+                p = p - 1
+            }
+            if p < BESTIARY {
+                let mut q: i32 = BESTIARY - 1
+                while q > p {
+                    cs.rare[q] = cs.rare[q - 1]
+                    cs.rare_count[q] = cs.rare_count[q - 1]
+                    q = q - 1
+                }
+                cs.rare[p] = ex
+                cs.rare_count[p] = c
+            }
+        }
+    }
     for k in 0 to PLAN_SLOTS {
         let c: i32 = cs.counts[k]
         if c >= 10 { cs.morphospecies = cs.morphospecies + 1 }
@@ -225,7 +262,11 @@ export function census_genomes(cs: ptr<Census>, cr: ptr<Creature>, g: ptr<u32>, 
     let mut rmax: f32 = 0.0
     let mut cmax: i32 = 0
     let mut xs: f64 = 0.0
+    let mut neur: f64 = 0.0
+    let mut nmax: i32 = 0
     for i in 0 to n {
+        neur = neur + (cr[i].neurons as f64)
+        if cr[i].neurons > nmax { nmax = cr[i].neurons }
         let gb: i32 = i * L_WORDS
         let mut k: i32 = g[prog_at(gb, 0)] as i32
         let kb: i32 = g[prog_at(gb, 1)] as i32
@@ -241,10 +282,20 @@ export function census_genomes(cs: ptr<Census>, cr: ptr<Creature>, g: ptr<u32>, 
         cs.mean_prog = (prog / (n as f64)) as f32
         cs.mean_resist = (res / (n as f64)) as f32
         cs.mean_x = (xs / (n as f64)) as f32
+        cs.mean_neur = (neur / (n as f64)) as f32
     }
+    cs.max_neur = nmax
     cs.max_prog = pmax
     cs.max_resist = rmax
     cs.max_cells = cmax
+}
+
+# Selection differential on network size: parents' mean number of evolved
+# neurons minus the population's. Call after census_genomes.
+export function census_selection_net(cs: ptr<Census>, par_nn: f64, par_n: f64) -> void {
+    if par_n > 0.0 {
+        cs.sel_n = ((par_nn / par_n) as f32) - cs.mean_neur
+    }
 }
 
 # Add one tick's energy intake by source.
@@ -274,6 +325,7 @@ export function census_record(cs: ptr<Census>, n: i32) -> void {
     cs.hist_meat_e[k] = cs.f_meat
     cs.hist_resist[k] = cs.mean_resist
     cs.hist_prog[k] = cs.mean_prog
+    cs.hist_neur[k] = cs.mean_neur
     cs.hist_x[k] = cs.mean_x
     cs.hist_strength[k] = cs.strength
     cs.hist_selv[k] = cs.sel_v
