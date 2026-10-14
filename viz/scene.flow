@@ -1,0 +1,519 @@
+# The ocean as a picture: every screen pixel shaded from the world fields
+# under it.
+#
+#   relief     ridges and passes become a smooth height field (a blurred
+#              terrain mask), lit from the upper left, with sand at the
+#              shore, rock above, and a shadow cast on the water
+#   water      deep blue to turquoise in the shallows; algae (the food
+#              field) tint it green and detritus brown; caustics play in
+#              daylight; foam rims the shore
+#   flow view  vorticity in red (clockwise) and blue, brightness by speed
+#   light      the Sun model sets the ambient level, so nights are dark
+#   vessels    in a dish or on a slide: a dark bench, the vessel's glass
+#              rim, and the medium; nutrient depletion, antibiotic bands,
+#              sediment refuges and light gradients show in it
+#   styles     natural colour; bright-field microscopy (pale field,
+#              translucent organisms); dark-field (black field, organisms
+#              lit at their edges)
+#
+# Fields are sampled bilinearly with smoothstep weights, so a world cell
+# several pixels wide shades smoothly.
+
+import "stdlib/memory.flow"
+import gsim.config
+import gsim.state
+import glife.lconfig
+import glife.fluid
+import glife.lworld
+import .fb
+import .camera
+
+extern {
+    function sinf(x: f32) -> f32
+    function sqrtf(x: f32) -> f32
+    function floorf(x: f32) -> f32
+}
+
+const CAUSTIC_N: i32 = 128
+
+struct Scene {
+    height: ptr<f32>,
+    tmp: ptr<f32>,
+    pass: ptr<f32>,
+    caustic: ptr<f32>,
+    vort: ptr<f32>,
+    built_open: i32
+}
+
+export function scene_new() -> Scene {
+    let n: i64 = WORLD_CELLS as i64
+    let mut s: Scene = Scene {
+        height: alloc_f32(n), tmp: alloc_f32(n), pass: alloc_f32(n),
+        caustic: alloc_f32((CAUSTIC_N * CAUSTIC_N) as i64),
+        vort: alloc_f32(FL_CELLS as i64),
+        built_open: -1
+    }
+    scene_caustics(&s)
+    return s
+}
+
+# A tileable caustic pattern: thin bright lines where several wave
+# crests cross, made from integer-frequency waves so it wraps.
+function scene_caustics(s: ptr<Scene>) -> void {
+    let n: i32 = CAUSTIC_N
+    let tau: f32 = 6.2831853
+    let fx: array<f32, 5> = [3.0, -2.0, 5.0, 1.0, -4.0]
+    let fy: array<f32, 5> = [1.0, 4.0, -2.0, 5.0, 3.0]
+    let ph: array<f32, 5> = [0.0, 1.3, 2.9, 4.1, 5.3]
+    let mut hi: f32 = 0.0
+    for y in 0 to n {
+        for x in 0 to n {
+            let u: f32 = (x as f32) / (n as f32)
+            let v: f32 = (y as f32) / (n as f32)
+            let mut acc: f32 = 0.0
+            for k in 0 to 5 {
+                let w: f32 = sinf(tau * (fx[k] * u + fy[k] * v) + ph[k])
+                acc = acc + w
+            }
+            # Bright where the summed waves come close to a crest.
+            let mut c: f32 = 1.0 - abs_f(acc) * 0.5
+            if c < 0.0 { c = 0.0 }
+            c = c * c * c * c
+            s.caustic[y * n + x] = c
+            if c > hi { hi = c }
+        }
+    }
+    for k in 0 to n * n {
+        s.caustic[k] = s.caustic[k] / hi
+    }
+}
+
+# Height field from the terrain: ridges 1, closed passes 1, open passes
+# low, water 0; blurred three times on the torus.
+export function scene_terrain(s: ptr<Scene>, env: ptr<World>) -> void {
+    let mut open: i32 = 0
+    if env.passes_open { open = 1 }
+    if open == s.built_open { return }
+    s.built_open = open
+    let h: ptr<f32> = s.height
+    let t: ptr<f32> = s.tmp
+    for c in 0 to WORLD_CELLS {
+        let ty: u8 = env.terrain[c]
+        let mut v: f32 = 0.0
+        let mut p: f32 = 0.0
+        if ty == TERRAIN_RIDGE { v = 1.0 }
+        if ty == TERRAIN_PASS {
+            p = 1.0
+            if open == 1 { v = 0.38 } else { v = 1.0 }
+        }
+        h[c] = v
+        s.pass[c] = p
+    }
+    for pass in 0 to 3 {
+        for y in 0 to WORLD_H {
+            for x in 0 to WORLD_W {
+                let mut acc: f32 = 0.0
+                for k in 0 to 9 {
+                    let xx: i32 = (x + k % 3 - 1) & (WORLD_W - 1)
+                    let yy: i32 = (y + k / 3 - 1) & (WORLD_H - 1)
+                    acc = acc + h[yy * WORLD_W + xx]
+                }
+                t[y * WORLD_W + x] = acc / 9.0
+            }
+        }
+        for c in 0 to WORLD_CELLS {
+            h[c] = t[c]
+        }
+    }
+    for pass in 0 to 2 {
+        for y in 0 to WORLD_H {
+            for x in 0 to WORLD_W {
+                let mut acc: f32 = 0.0
+                for k in 0 to 9 {
+                    let xx: i32 = (x + k % 3 - 1) & (WORLD_W - 1)
+                    let yy: i32 = (y + k / 3 - 1) & (WORLD_H - 1)
+                    acc = acc + s.pass[yy * WORLD_W + xx]
+                }
+                t[y * WORLD_W + x] = acc / 9.0
+            }
+        }
+        for c in 0 to WORLD_CELLS {
+            s.pass[c] = t[c]
+        }
+    }
+}
+
+# Vorticity on the fluid grid, once per frame.
+export function scene_vorticity(s: ptr<Scene>, fl: ptr<Fluid>) -> void {
+    let vort: ptr<f32> = s.vort
+    parallel for y in 0 to FL_N {
+        for x in 0 to FL_N {
+            vort[y * FL_N + x] = fluid_curl(fl, x, y)
+        }
+    }
+}
+
+function smooth01(t: f32) -> f32 {
+    return t * t * (3.0 - 2.0 * t)
+}
+
+# Smooth bilinear sample of a WORLD_W x WORLD_H field at world (x, y),
+# cell centres at half-integers, periodic.
+export function samp(a: ptr<f32>, x: f32, y: f32) -> f32 {
+    let fx: f32 = x - 0.5
+    let fy: f32 = y - 0.5
+    let flx: f32 = floorf(fx)
+    let fly: f32 = floorf(fy)
+    let x0: i32 = (flx as i32) & (WORLD_W - 1)
+    let y0: i32 = (fly as i32) & (WORLD_H - 1)
+    let x1: i32 = (x0 + 1) & (WORLD_W - 1)
+    let y1: i32 = (y0 + 1) & (WORLD_H - 1)
+    let tx: f32 = smooth01(fx - flx)
+    let ty: f32 = smooth01(fy - fly)
+    let a0: f32 = a[y0 * WORLD_W + x0] + (a[y0 * WORLD_W + x1] - a[y0 * WORLD_W + x0]) * tx
+    let a1: f32 = a[y1 * WORLD_W + x0] + (a[y1 * WORLD_W + x1] - a[y1 * WORLD_W + x0]) * tx
+    return a0 + (a1 - a0) * ty
+}
+
+function caust(c: ptr<f32>, x: f32, y: f32) -> f32 {
+    let n: i32 = CAUSTIC_N
+    let flx: f32 = floorf(x)
+    let fly: f32 = floorf(y)
+    let x0: i32 = (flx as i32) & (n - 1)
+    let y0: i32 = (fly as i32) & (n - 1)
+    let x1: i32 = (x0 + 1) & (n - 1)
+    let y1: i32 = (y0 + 1) & (n - 1)
+    let tx: f32 = x - flx
+    let ty: f32 = y - fly
+    let a0: f32 = c[y0 * n + x0] + (c[y0 * n + x1] - c[y0 * n + x0]) * tx
+    let a1: f32 = c[y1 * n + x0] + (c[y1 * n + x1] - c[y1 * n + x0]) * tx
+    return a0 + (a1 - a0) * ty
+}
+
+function mixf(a: f32, b: f32, t: f32) -> f32 {
+    return a + (b - a) * t
+}
+
+function sat(v: f32) -> f32 {
+    if v < 0.0 { return 0.0 }
+    if v > 1.0 { return 1.0 }
+    return v
+}
+
+function to8(v: f32) -> i32 {
+    let mut x: f32 = v * 255.0 + 0.5
+    if x < 0.0 { x = 0.0 }
+    if x > 255.0 { x = 255.0 }
+    return x as i32
+}
+
+# Everything the per-point shader needs, gathered once per frame.
+struct Shade {
+    h: ptr<f32>,
+    pass: ptr<f32>,
+    food: ptr<f32>,
+    det: ptr<f32>,
+    tox: ptr<f32>,
+    lightmap: ptr<f32>,
+    refuge: ptr<u8>,
+    vort: ptr<f32>,
+    caustic: ptr<f32>,
+    fl: ptr<Fluid>,
+    day: f32,
+    t: f32,
+    open: bool,
+    flow_view: bool,
+    agar: bool,
+    ocean: bool,
+    style: i32,
+    bench: i32
+}
+
+export function shade_ctx(s: ptr<Scene>, l: ptr<Life>, t: f32, flow_view: bool, style: i32) -> Shade {
+    return Shade {
+        h: s.height, pass: s.pass, food: l.env.food, det: l.det, tox: l.toxin,
+        lightmap: l.lightmap, refuge: l.refuge, vort: s.vort, caustic: s.caustic,
+        fl: &l.fluid, day: l.daylight, t: t, open: l.env.passes_open, flow_view: flow_view,
+        agar: l.cfg.flow <= 0.0 and l.cfg.habitat != HAB_OCEAN,
+        ocean: l.cfg.habitat == HAB_OCEAN, style: style, bench: bench_rgb(style)
+    }
+}
+
+# The bench a vessel stands on.
+export function bench_rgb(style: i32) -> i32 {
+    if style == 1 { return 0x2a2a2c }
+    if style == 2 { return 0x000000 }
+    return 0x16181b
+}
+
+# Colour of the world at (wx, wy), 0xRRGGBB. Off the edge of a vessel's
+# world is bench.
+export function shade_point(c: ptr<Shade>, wx: f32, wy: f32) -> i32 {
+    if !c.ocean {
+        if wx < 0.0 or wy < 0.0 or wx >= (WORLD_W as f32) or wy >= (WORLD_H as f32) { return c.bench }
+    }
+    if c.ocean and c.style == 0 { return ocean_point(c, wx, wy) }
+    return lab_point(c, wx, wy)
+}
+
+function rgbf(r: f32, g: f32, b: f32) -> i32 {
+    return (to8(r) << 16) | (to8(g) << 8) | to8(b)
+}
+
+# The open ocean in natural colour. Gradient step for the relief normal
+# is half a world unit.
+function ocean_point(c: ptr<Shade>, wx: f32, wy: f32) -> i32 {
+    let h: ptr<f32> = c.h
+    let day: f32 = c.day
+    let t: f32 = c.t
+    let amb: f32 = 0.16 + 0.84 * day
+    let night: f32 = 1.0 - day
+    let e: f32 = 0.5
+    let hh: f32 = samp(h, wx, wy)
+    let mut r: f32 = 0.0
+    let mut g: f32 = 0.0
+    let mut b: f32 = 0.0
+    if hh >= 0.5 {
+        # Relief: normal from the height gradient, light from the upper
+        # left and above.
+        let dx: f32 = samp(h, wx + e, wy) - samp(h, wx - e, wy)
+        let dy: f32 = samp(h, wx, wy + e) - samp(h, wx, wy - e)
+        let nx: f32 = 0.0 - dx * 3.0
+        let ny: f32 = 0.0 - dy * 3.0
+        let nl: f32 = 1.0 / sqrtf(nx * nx + ny * ny + 1.0)
+        let mut lam: f32 = (0.0 - 0.45 * nx - 0.55 * ny + 0.70) * nl
+        if lam < 0.0 { lam = 0.0 }
+        let up: f32 = sat((hh - 0.5) * 4.0)
+        r = mixf(0.74, 0.47, up)
+        g = mixf(0.66, 0.44, up)
+        b = mixf(0.50, 0.41, up)
+        let pp: f32 = samp(c.pass, wx, wy)
+        if pp > 0.05 {
+            if c.open {
+                r = mixf(r, 0.80, pp * 0.6)
+                g = mixf(g, 0.72, pp * 0.6)
+                b = mixf(b, 0.52, pp * 0.6)
+            } else {
+                r = mixf(r, 0.62, pp)
+                g = mixf(g, 0.26, pp)
+                b = mixf(b, 0.20, pp)
+            }
+        }
+        let lit: f32 = 0.30 + 0.85 * lam
+        r = r * lit * amb
+        g = g * lit * amb
+        b = (b * lit + 0.03 * night) * amb
+    } elif c.flow_view {
+        let w: f32 = fl_sample(c.vort, wx * 0.5 - 0.5, wy * 0.5 - 0.5)
+        let u: f32 = fluid_u_at(c.fl, wx, wy)
+        let v: f32 = fluid_v_at(c.fl, wx, wy)
+        let sp: f32 = sat(sqrtf(u * u + v * v) * 2.2)
+        let mut wp: f32 = w * 30.0
+        let mut wn: f32 = 0.0 - w * 30.0
+        if wp < 0.0 { wp = 0.0 }
+        if wn < 0.0 { wn = 0.0 }
+        r = 0.03 + 0.95 * sat(wp) * (0.35 + 0.65 * sp) + 0.10 * sp
+        g = 0.04 + 0.30 * sat(wp + wn) * sp + 0.14 * sp
+        b = 0.07 + 0.95 * sat(wn) * (0.35 + 0.65 * sp) + 0.16 * sp
+        if hh > 0.36 {
+            let fo: f32 = sat((hh - 0.36) * 7.0)
+            r = mixf(r, 0.25, fo * 0.5)
+            g = mixf(g, 0.25, fo * 0.5)
+            b = mixf(b, 0.28, fo * 0.5)
+        }
+    } else {
+        let shallow: f32 = sat(hh * 2.0)
+        let sh2: f32 = shallow * shallow
+        r = mixf(0.020, 0.07, sh2)
+        g = mixf(0.085, 0.33, sh2)
+        b = mixf(0.150, 0.38, sh2)
+        # Algae: green where the food field is high.
+        let fd: f32 = sat(samp(c.food, wx, wy))
+        let ga: f32 = fd * 0.55
+        r = mixf(r, 0.10, ga)
+        g = mixf(g, 0.36, ga)
+        b = mixf(b, 0.17, ga)
+        # Detritus: a brown haze.
+        let dt: f32 = sat(samp(c.det, wx, wy) * 0.6) * 0.45
+        r = mixf(r, 0.30, dt)
+        g = mixf(g, 0.22, dt)
+        b = mixf(b, 0.11, dt)
+        # Currents: a faint tint by the sign of the vorticity.
+        let w: f32 = fl_sample(c.vort, wx * 0.5 - 0.5, wy * 0.5 - 0.5) * 6.0
+        if w > 0.0 { r = r + 0.10 * sat(w) } else { b = b + 0.10 * sat(0.0 - w) }
+        # Caustics, two layers drifting apart, brighter in shallows.
+        let c1: f32 = caust(c.caustic, wx * 0.9 + t * 0.011, wy * 0.9 + t * 0.004)
+        let c2: f32 = caust(c.caustic, wx * 0.7 - t * 0.006, wy * 0.7 + t * 0.009 + 37.0)
+        let ca: f32 = c1 * c2 * (0.45 + 0.9 * shallow) * day
+        r = r + 0.30 * ca
+        g = g + 0.42 * ca
+        b = b + 0.40 * ca
+        # Shadow of the relief, cast down and to the right.
+        let hs: f32 = samp(h, wx - 0.8, wy - 0.8)
+        if hs > 0.45 {
+            let k: f32 = 1.0 - 0.35 * sat((hs - 0.45) * 8.0) * (0.3 + 0.7 * day)
+            r = r * k
+            g = g * k
+            b = b * k
+        }
+        # Foam along the shore.
+        if hh > 0.40 {
+            let fo: f32 = sat((hh - 0.40) * 10.0)
+            let wave: f32 = 0.55 + 0.45 * sinf(t * 0.03 + (wx + wy) * 1.7)
+            let a: f32 = fo * wave * 0.55
+            r = mixf(r, 0.85, a)
+            g = mixf(g, 0.92, a)
+            b = mixf(b, 0.95, a)
+        }
+        r = r * amb
+        g = g * amb
+        b = b * amb + 0.035 * night
+    }
+    return rgbf(r, g, b)
+}
+
+# A vessel on the bench, or the ocean in a microscope style. Style 0
+# natural, 1 bright-field, 2 dark-field.
+function lab_point(c: ptr<Shade>, wx: f32, wy: f32) -> i32 {
+    let hh: f32 = samp(c.h, wx, wy)
+    let mut r: f32 = 0.0
+    let mut g: f32 = 0.0
+    let mut b: f32 = 0.0
+    let fd: f32 = sat(samp(c.food, wx, wy))
+    let dt: f32 = sat(samp(c.det, wx, wy) * 0.6)
+    let tx: f32 = samp(c.tox, wx, wy)
+    let lm: f32 = samp(c.lightmap, wx, wy)
+    let cx: i32 = (wx as i32) & (WORLD_W - 1)
+    let cy: i32 = (wy as i32) & (WORLD_H - 1)
+    let rf: bool = c.refuge[cy * WORLD_W + cx] != (0 as u8)
+    if c.style == 1 {
+        # Bright-field: a pale field; what is dissolved or suspended
+        # darkens it a little.
+        r = 0.90 - 0.10 * fd - 0.20 * dt - 0.02 * tx
+        g = 0.89 - 0.05 * fd - 0.22 * dt - 0.07 * tx
+        b = 0.84 - 0.12 * fd - 0.26 * dt - 0.03 * tx
+        if rf {
+            let n: f32 = hash2(cx, cy)
+            r = r - 0.25 * n
+            g = g - 0.28 * n
+            b = b - 0.32 * n
+        }
+        let k: f32 = 0.55 + 0.45 * lm
+        r = r * k
+        g = g * k
+        b = b * k
+    } elif c.style == 2 {
+        r = 0.015 + 0.03 * fd + 0.08 * dt + 0.018 * tx
+        g = 0.018 + 0.05 * fd + 0.06 * dt
+        b = 0.03 + 0.04 * fd + 0.04 * dt
+        if rf { r = r + 0.05 * hash2(cx, cy) }
+        r = r * (0.4 + 0.6 * lm)
+        g = g * (0.4 + 0.6 * lm)
+        b = b * (0.4 + 0.6 * lm)
+    } elif c.agar {
+        # Agar: pale amber, paler where nutrient has been used up.
+        r = 0.66 + 0.10 * (1.0 - fd) - 0.20 * dt
+        g = 0.52 + 0.10 * (1.0 - fd) - 0.18 * dt
+        b = 0.30 + 0.12 * (1.0 - fd) - 0.10 * dt
+        # Antibiotic: a rose tint by concentration.
+        let tt: f32 = sat(tx * 0.33)
+        r = mixf(r, 0.80, tt * 0.45)
+        g = mixf(g, 0.40, tt * 0.45)
+        b = mixf(b, 0.50, tt * 0.45)
+        let k: f32 = 0.55 + 0.45 * lm
+        r = r * k
+        g = g * k
+        b = b * k
+    } else {
+        # Liquid medium in natural colour: clear, faintly blue, greener
+        # with algae, browner with detritus.
+        r = 0.40 - 0.10 * fd
+        g = 0.50 + 0.04 * fd
+        b = 0.56 - 0.12 * fd
+        r = mixf(r, 0.36, dt * 0.5)
+        g = mixf(g, 0.30, dt * 0.5)
+        b = mixf(b, 0.20, dt * 0.5)
+        let tt: f32 = sat(tx * 0.33)
+        r = mixf(r, 0.75, tt * 0.4)
+        g = mixf(g, 0.38, tt * 0.4)
+        b = mixf(b, 0.52, tt * 0.4)
+        if rf {
+            let n: f32 = hash2(cx, cy)
+            r = mixf(r, 0.36, 0.35 + 0.3 * n)
+            g = mixf(g, 0.29, 0.35 + 0.3 * n)
+            b = mixf(b, 0.20, 0.35 + 0.3 * n)
+        }
+        if c.flow_view {
+            let w: f32 = fl_sample(c.vort, wx * 0.5 - 0.5, wy * 0.5 - 0.5) * 40.0
+            if w > 0.0 { r = r + 0.25 * sat(w) } else { b = b + 0.25 * sat(0.0 - w) }
+        }
+        let k: f32 = 0.5 + 0.5 * lm
+        r = r * k
+        g = g * k
+        b = b * k
+    }
+    if c.ocean {
+        let amb: f32 = 0.16 + 0.84 * c.day
+        r = r * amb
+        g = g * amb
+        b = b * amb
+    }
+    # The vessel: a glass rim, then the bench.
+    if hh > 0.32 {
+        let rim: f32 = sat((hh - 0.32) * 5.0)
+        let out: f32 = sat((hh - 0.55) * 6.0)
+        let glass: f32 = rim * (1.0 - out)
+        let gl: f32 = 0.55 + 0.4 * sinf(hh * 18.0)
+        r = mixf(r, 0.78 * gl + 0.15, glass * 0.75)
+        g = mixf(g, 0.82 * gl + 0.15, glass * 0.75)
+        b = mixf(b, 0.86 * gl + 0.18, glass * 0.75)
+        let br: f32 = (((c.bench >> 16) & 255) as f32) / 255.0
+        let bg: f32 = (((c.bench >> 8) & 255) as f32) / 255.0
+        let bb: f32 = ((c.bench & 255) as f32) / 255.0
+        r = mixf(r, br, out)
+        g = mixf(g, bg, out)
+        b = mixf(b, bb, out)
+    }
+    return rgbf(r, g, b)
+}
+
+function hash2(x: i32, y: i32) -> f32 {
+    let mut h: u32 = ((x as u32) * (374761393 as u32)) ^ ((y as u32) * (668265263 as u32))
+    h = (h ^ (h >> (13 as u32))) * (1274126177 as u32)
+    h = h ^ (h >> (16 as u32))
+    return ((h & (65535 as u32)) as f32) / 65535.0
+}
+
+# Darken toward the frame's corners.
+export function vignette(rgb: i32, k: f32) -> u32 {
+    let r: i32 = (((rgb >> 16) & 255) as f32 * k) as i32
+    let g: i32 = (((rgb >> 8) & 255) as f32 * k) as i32
+    let b: i32 = (((rgb & 255) as f32) * k) as i32
+    return pack(r, g, b)
+}
+
+# Shade the frame from above (the 2D view).
+export function scene_draw(f: Frame, s: ptr<Scene>, cam: ptr<Camera>, l: ptr<Life>, t: f32,
+                           flow_view: bool, style: i32) -> void {
+    let ctx: Shade = shade_ctx(s, l, t, flow_view, style)
+    let c: ptr<Shade> = &ctx
+    let px: ptr<u32> = f.px
+    let fw: i32 = f.w
+    let fh: i32 = f.h
+    let inv: f32 = 1.0 / cam.scale
+    let x0w: f32 = cam.cx - (fw as f32) * 0.5 * inv
+    let y0w: f32 = cam.cy - (fh as f32) * 0.5 * inv
+    let wrap: bool = cam.wrap
+    parallel for y in 0 to fh {
+        let mut wy: f32 = y0w + ((y as f32) + 0.5) * inv
+        if wrap { wy = cam_wrap(wy, WORLD_H as f32) }
+        let vy: f32 = ((y as f32) / (fh as f32)) - 0.5
+        let row: i32 = y * fw
+        for x in 0 to fw {
+            let mut wx: f32 = x0w + ((x as f32) + 0.5) * inv
+            if wrap { wx = cam_wrap(wx, WORLD_W as f32) }
+            let vx: f32 = ((x as f32) / (fw as f32)) - 0.5
+            px[row + x] = vignette(shade_point(c, wx, wy), 1.0 - 0.40 * (vx * vx + vy * vy))
+        }
+    }
+}

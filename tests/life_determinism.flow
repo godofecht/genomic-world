@@ -1,13 +1,25 @@
-# Prints a hash of the life world after 600 ticks. run.sh test runs this at
-# one thread and at eight and requires the same hash.
+# Prints a hash of the life world after a run in each mode: the ocean with
+# 2D body plans, Gause's dish in morph mode, and a petri dish with 3D
+# combined bodies. run.sh test runs this at one thread and at eight and
+# requires the same hash.
 
+import glife.lconfig
 import glife.lworld
+import glife.habitat
 
 function main() -> i32 {
-    let mut l: Life = life_init(777 as u32)
-    for t in 0 to 600 {
-        life_step(&l)
+    let mut a: Life = life_create(777 as u32, P_OCEAN, MODE_PLAN, 2)
+    for t in 0 to 500 {
+        life_step(&a)
     }
-    printf("hash %u n %d\n", life_hash(&l), l.n)
+    let mut b: Life = life_create(778 as u32, P_GAUSE, MODE_MORPH, 2)
+    for t in 0 to 300 {
+        life_step(&b)
+    }
+    let mut c: Life = life_create(779 as u32, P_DISH, MODE_COMBINED, 3)
+    for t in 0 to 300 {
+        life_step(&c)
+    }
+    printf("hash %u %u %u n %d %d %d\n", life_hash(&a), life_hash(&b), life_hash(&c), a.n, b.n, c.n)
     return 0
 }

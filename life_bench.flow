@@ -8,6 +8,7 @@ import glife.lconfig
 import glife.creature
 import glife.lworld
 import glife.census
+import glife.habitat
 
 extern {
     function getenv(name: string) -> ptr<u8>
@@ -18,27 +19,49 @@ function main() -> i32 {
     let v: ptr<u8> = getenv("GW_TICKS")
     let mut ticks: i32 = 6000
     if v != null { ticks = atoi(v) }
-    let mut l: Life = life_init(params_seed(20261014 as u32))
+    # GW_PRESET, GW_MODE (0 plan, 1 morph, 2 combined), GW_DIMS (2 or 3).
+    let mut preset: i32 = P_OCEAN
+    let pv: ptr<u8> = getenv("GW_PRESET")
+    if pv != null { preset = atoi(pv) }
+    let mut mode: i32 = preset_mode(preset)
+    let mv: ptr<u8> = getenv("GW_MODE")
+    if mv != null { mode = atoi(mv) }
+    let mut dims: i32 = 2
+    let dv: ptr<u8> = getenv("GW_DIMS")
+    if dv != null { dims = atoi(dv) }
+    printf("%s, mode %d, %dD bodies\n", preset_name(preset), mode, dims)
+    let mut l: Life = life_create(params_seed(20261014 as u32), preset, mode, dims)
     let mut cs: Census = census_new()
-    printf(" tick     n  births  kills  plans  species  cells  eyes  width  speed  armor  predators  current  S_speed  S_width  max gen  ms/tick\n")
+    printf(" tick     n  births  kills  plans  species  cells  eyes  photo  speed  armor  pred  auto  mixo  E_graze E_scav E_photo E_meat  current  S_speed  max gen  ms/tick  prog maxprog maxcells resist maxres  mean_x\n")
+    let mut every: i32 = 500
+    let ev: ptr<u8> = getenv("GW_EVERY")
+    if ev != null { every = atoi(ev) }
+    let pf: ptr<u8> = getenv("GW_PROFILE")
+    if pf != null { l.profile = true }
     let t0: i64 = xp_now_ns()
     let mut tl: i64 = t0
     let mut agent_ticks: f64 = 0.0
     for t in 1 to ticks + 1 {
         agent_ticks = agent_ticks + (l.n as f64)
         life_step(&l)
-        if t % 500 == 0 {
+        census_energy(&cs, l.gain_graze, l.gain_scav, l.gain_photo, l.gain_meat)
+        if t % every == 0 {
             let now: i64 = xp_now_ns()
             census_take(&cs, l.cr, l.n)
             census_selection(&cs, l.par_v, l.par_w, l.par_n, l.fluid.strength)
             l.par_v = 0.0
             l.par_w = 0.0
             l.par_n = 0.0
-            printf("%5d %5d %7d %6d %6d %8d %6.2f %5.2f %6.2f %6.2f %6.2f %10.3f %8.2f %8.3f %8.3f %8d %8.3f\n",
+            census_genomes(&cs, l.cr, l.genome, l.n)
+            census_record(&cs, l.n)
+            printf("%5d %5d %7d %6d %6d %8d %6.2f %5.2f %6.2f %6.2f %6.2f %5.3f %5.3f %5.3f  %7.3f %6.3f %7.3f %6.3f %8.2f %8.3f %8d %8.3f %5.2f %7d %8d %6.3f %6.3f %7.1f\n",
                    t, l.n, l.births, l.kills, cs.plans, cs.morphospecies,
-                   cs.mean_cells as f64, cs.mean_eyes as f64, cs.mean_width as f64, cs.mean_speed as f64,
-                   cs.mean_armor as f64, cs.predators as f64, cs.strength as f64, cs.sel_v as f64,
-                   cs.sel_w as f64, cs.max_gen, ((now - tl) as f64) / 1000000.0 / 500.0)
+                   cs.mean_cells as f64, cs.mean_eyes as f64, cs.mean_photo as f64, cs.mean_speed as f64,
+                   cs.mean_armor as f64, cs.predators as f64, cs.autotrophs as f64, cs.mixotrophs as f64,
+                   cs.f_graze as f64, cs.f_scav as f64, cs.f_photo as f64, cs.f_meat as f64,
+                   cs.strength as f64, cs.sel_v as f64, cs.max_gen, ((now - tl) as f64) / 1000000.0 / (every as f64),
+                   cs.mean_prog as f64, cs.max_prog, cs.max_cells, cs.mean_resist as f64, cs.max_resist as f64,
+                   cs.mean_x as f64)
             tl = xp_now_ns()
         }
         if l.n == 0 {
@@ -47,6 +70,14 @@ function main() -> i32 {
         }
     }
     let secs: f64 = ((xp_now_ns() - t0) as f64) / 1000000000.0
+    if l.profile {
+        printf("ms per tick: drivers %.3f  fluid %.3f  medium %.3f  index %.3f  act %.3f  feed %.3f  reproduce %.3f  compact %.3f\n",
+               l.prof[0] / 1000000.0 / (ticks as f64), l.prof[6] / 1000000.0 / (ticks as f64),
+               l.prof[7] / 1000000.0 / (ticks as f64),
+               l.prof[1] / 1000000.0 / (ticks as f64),
+               l.prof[2] / 1000000.0 / (ticks as f64), l.prof[3] / 1000000.0 / (ticks as f64),
+               l.prof[4] / 1000000.0 / (ticks as f64), l.prof[5] / 1000000.0 / (ticks as f64))
+    }
     printf("\n%d ticks in %.1f s: %.0f ticks/s, %.2f M organism-ticks/s\n", ticks, secs,
            (ticks as f64) / secs, agent_ticks / secs / 1000000.0)
     return 0

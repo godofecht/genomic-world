@@ -1,0 +1,180 @@
+# Full-screen presentation for the window that gfx_open makes (macOS).
+#
+# gfx_open gives a Cocoa window whose view draws a fixed-size buffer at one
+# point per pixel. On a Retina screen that is half the panel's resolution,
+# and the window cannot be resized or made full screen. This module takes
+# over that window through the Objective-C runtime:
+#
+#   disp_screen     the main screen's size in device pixels
+#   disp_attach     adds a Core Animation layer over the view, makes the
+#                   window resizable and able to go full screen
+#   disp_present    shows an RGBX frame of any size in that layer, scaled
+#                   to fit the window, letterboxed; no copy on our side
+#   disp_fullscreen toggles macOS full screen
+#   disp_mouse      pointer position in frame pixels, and buttons
+#
+# Keys and the scroll wheel still come through gfx.flow, since the original
+# view stays first responder. Plain C over objc_msgSend, so it needs no
+# Objective-C compiler; every message is cast to its exact signature, as
+# arm64 requires.
+
+@cEmbed("#include <objc/runtime.h>
+#include <objc/message.h>
+#include <CoreGraphics/CoreGraphics.h>
+
+static id disp_win_ = 0;
+static id disp_view_ = 0;
+static id disp_layer_ = 0;
+static CGColorSpaceRef disp_cs_ = 0;
+
+static SEL disp_sel(const char* n) { return sel_registerName(n); }
+static id disp_cls(const char* n) { return (id)objc_getClass(n); }
+static id disp_m0(id o, const char* s) { return ((id (*)(id, SEL))objc_msgSend)(o, disp_sel(s)); }
+static void disp_m1(id o, const char* s, id a) { ((void (*)(id, SEL, id))objc_msgSend)(o, disp_sel(s), a); }
+static void disp_mb(id o, const char* s, BOOL b) { ((void (*)(id, SEL, BOOL))objc_msgSend)(o, disp_sel(s), b); }
+static unsigned long disp_mu(id o, const char* s) { return ((unsigned long (*)(id, SEL))objc_msgSend)(o, disp_sel(s)); }
+static void disp_setu(id o, const char* s, unsigned long v) { ((void (*)(id, SEL, unsigned long))objc_msgSend)(o, disp_sel(s), v); }
+static CGRect disp_rect(id o, const char* s) { return ((CGRect (*)(id, SEL))objc_msgSend)(o, disp_sel(s)); }
+
+static int32_t disp_screen_px(int32_t* out) {
+    id scr = disp_m0(disp_cls(\"NSScreen\"), \"mainScreen\");
+    if (!scr) { out[0] = 1280; out[1] = 800; out[2] = 100; return 0; }
+    CGRect f = disp_rect(scr, \"frame\");
+    double s = ((double (*)(id, SEL))objc_msgSend)(scr, disp_sel(\"backingScaleFactor\"));
+    out[0] = (int32_t)(f.size.width * s + 0.5);
+    out[1] = (int32_t)(f.size.height * s + 0.5);
+    out[2] = (int32_t)(s * 100.0 + 0.5);
+    return 1;
+}
+
+static int32_t disp_attach_c(void) {
+    if (disp_win_) return 1;
+    id app = disp_m0(disp_cls(\"NSApplication\"), \"sharedApplication\");
+    id wins = disp_m0(app, \"windows\");
+    if (!wins || disp_mu(wins, \"count\") == 0) return 0;
+    disp_win_ = ((id (*)(id, SEL, unsigned long))objc_msgSend)(wins, disp_sel(\"objectAtIndex:\"), 0ul);
+    disp_view_ = disp_m0(disp_win_, \"contentView\");
+    disp_mb(disp_view_, \"setWantsLayer:\", YES);
+    id root = disp_m0(disp_view_, \"layer\");
+    id black = disp_m0(disp_cls(\"NSColor\"), \"blackColor\");
+    ((void (*)(id, SEL, CGColorRef))objc_msgSend)(root, disp_sel(\"setBackgroundColor:\"),
+        ((CGColorRef (*)(id, SEL))objc_msgSend)(black, disp_sel(\"CGColor\")));
+    id layer = disp_m0(disp_cls(\"CALayer\"), \"layer\");
+    disp_m0(layer, \"retain\");
+    ((void (*)(id, SEL, CGRect))objc_msgSend)(layer, disp_sel(\"setFrame:\"), disp_rect(disp_view_, \"bounds\"));
+    ((void (*)(id, SEL, unsigned int))objc_msgSend)(layer, disp_sel(\"setAutoresizingMask:\"), 2u | 16u);
+    disp_m1(layer, \"setContentsGravity:\", (id)CFSTR(\"resizeAspect\"));
+    disp_m1(layer, \"setMagnificationFilter:\", (id)CFSTR(\"linear\"));
+    disp_m1(layer, \"setMinificationFilter:\", (id)CFSTR(\"linear\"));
+    disp_m1(root, \"addSublayer:\", layer);
+    disp_layer_ = layer;
+    /* NSWindowCollectionBehaviorFullScreenPrimary, NSWindowStyleMaskResizable */
+    disp_setu(disp_win_, \"setCollectionBehavior:\", 1ul << 7);
+    disp_setu(disp_win_, \"setStyleMask:\", disp_mu(disp_win_, \"styleMask\") | 8ul);
+    return 1;
+}
+
+static void disp_present_c(uint32_t* px, int32_t w, int32_t h) {
+    if (!disp_attach_c()) return;
+    if (!disp_cs_) disp_cs_ = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    CGDataProviderRef dp = CGDataProviderCreateWithData(NULL, px, (size_t)w * (size_t)h * 4u, NULL);
+    CGImageRef img = CGImageCreate((size_t)w, (size_t)h, 8, 32, (size_t)w * 4u, disp_cs_,
+                                   kCGBitmapByteOrderDefault | kCGImageAlphaNoneSkipLast,
+                                   dp, NULL, false, kCGRenderingIntentDefault);
+    id cat = disp_cls(\"CATransaction\");
+    disp_m0(cat, \"begin\");
+    disp_mb(cat, \"setDisableActions:\", YES);
+    disp_m1(disp_layer_, \"setContents:\", (id)img);
+    disp_m0(cat, \"commit\");
+    disp_m0(cat, \"flush\");
+    CGImageRelease(img);
+    CGDataProviderRelease(dp);
+}
+
+static void disp_fullscreen_c(void) {
+    if (!disp_attach_c()) return;
+    disp_m1(disp_win_, \"toggleFullScreen:\", (id)0);
+}
+
+static int32_t disp_is_fullscreen_c(void) {
+    if (!disp_attach_c()) return 0;
+    return (disp_mu(disp_win_, \"styleMask\") & (1ul << 14)) ? 1 : 0;
+}
+
+/* out: x, y in frame pixels (row 0 at the top), left, right, window is key,
+ * inside the frame. */
+static void disp_mouse_c(int32_t* out, int32_t bw, int32_t bh) {
+    for (int k = 0; k < 6; k++) out[k] = 0;
+    if (!disp_attach_c()) return;
+    CGPoint p = ((CGPoint (*)(id, SEL))objc_msgSend)(disp_win_, disp_sel(\"mouseLocationOutsideOfEventStream\"));
+    CGRect b = disp_rect(disp_view_, \"bounds\");
+    double sx = b.size.width / (double)bw;
+    double sy = b.size.height / (double)bh;
+    double s = sx < sy ? sx : sy;
+    double ox = (b.size.width - bw * s) * 0.5;
+    double oy = (b.size.height - bh * s) * 0.5;
+    double fx = (p.x - ox) / s;
+    double fy = (double)bh - (p.y - oy) / s;
+    out[0] = (int32_t)fx;
+    out[1] = (int32_t)fy;
+    unsigned long btn = disp_mu(disp_cls(\"NSEvent\"), \"pressedMouseButtons\");
+    int key = ((BOOL (*)(id, SEL))objc_msgSend)(disp_win_, disp_sel(\"isKeyWindow\")) ? 1 : 0;
+    int inside = fx >= 0.0 && fy >= 0.0 && fx < bw && fy < bh;
+    out[2] = (key && inside && (btn & 1ul)) ? 1 : 0;
+    out[3] = (key && inside && (btn & 2ul)) ? 1 : 0;
+    out[4] = key;
+    out[5] = inside;
+}")
+
+extern {
+    function disp_screen_px(out: ptr<i32>) -> i32
+    function disp_attach_c() -> i32
+    function disp_present_c(px: ptr<u32>, w: i32, h: i32) -> void
+    function disp_fullscreen_c() -> void
+    function disp_is_fullscreen_c() -> i32
+    function disp_mouse_c(out: ptr<i32>, bw: i32, bh: i32) -> void
+}
+
+struct Screen {
+    w: i32,
+    h: i32,
+    scale: f32
+}
+
+struct Pointer {
+    x: i32,
+    y: i32,
+    left: bool,
+    right: bool,
+    focused: bool,
+    inside: bool
+}
+
+export function disp_screen() -> Screen {
+    let o: array<i32, 3> = [0, 0, 0]
+    let ok: i32 = disp_screen_px(o)
+    return Screen { w: o[0], h: o[1], scale: (o[2] as f32) / 100.0 }
+}
+
+export function disp_attach() -> bool {
+    return disp_attach_c() == 1
+}
+
+export function disp_present(px: ptr<u32>, w: i32, h: i32) -> void {
+    disp_present_c(px, w, h)
+}
+
+export function disp_fullscreen() -> void {
+    disp_fullscreen_c()
+}
+
+export function disp_is_fullscreen() -> bool {
+    return disp_is_fullscreen_c() == 1
+}
+
+export function disp_mouse(w: i32, h: i32) -> Pointer {
+    let o: array<i32, 6> = [0, 0, 0, 0, 0, 0]
+    disp_mouse_c(o, w, h)
+    return Pointer { x: o[0], y: o[1], left: o[2] == 1, right: o[3] == 1,
+                     focused: o[4] == 1, inside: o[5] == 1 }
+}

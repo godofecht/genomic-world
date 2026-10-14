@@ -1,8 +1,22 @@
 # One organism's state, as a record, and its phenotype from its genome.
 #
-# Records live in one array; the genome, body lattice, expressed
-# developmental genes and brain weights live in parallel blocks indexed by
-# the same slot.
+# Records live in one array; genomes and brain weights live in parallel
+# blocks indexed by the same slot, and bodies in a cell arena (boff, bn).
+#
+# The phenotype depends on the world's mode (lconfig.flow):
+#
+#   plan      the developmental program grows a body of typed cells, and
+#             the cells set everything: mouths eat, motors swim, eyes see,
+#             armour and spikes fight, stores hold energy, photosynthetic
+#             cells make it from light
+#   morph     one cell, described by quantitative genes, as a protist is:
+#             its size and shape set mass and drag; flagella and cilia
+#             swim; a cytostome grazes; raptorial organelles hunt, as in
+#             Didinium; spines and a thick membrane or test defend;
+#             chlorophyll photosynthesises; an eyespot sees, as Euglena's
+#             stigma does; lipid stores energy
+#   combined  the body of plan mode, with each kind of cell made better or
+#             worse at its job by the same morphological genes, at a cost
 
 import gsim.bits
 import gsim.rng
@@ -10,8 +24,14 @@ import gsim.genome
 import .lconfig
 import .lgenome
 import .develop
+import .brain
 
-# 27 four-byte fields: CR_BYTES must match.
+extern {
+    function sqrtf(x: f32) -> f32
+}
+
+# 40 four-byte fields: CR_BYTES must match. h0-h3 are the hidden neurons'
+# state; thrust and turn are the last motor command, kept for the viewer.
 struct Creature {
     px: f32,
     py: f32,
@@ -29,6 +49,15 @@ struct Creature {
     drag: f32,
     thr: f32,
     topt: f32,
+    h0: f32,
+    h1: f32,
+    h2: f32,
+    h3: f32,
+    thrust: f32,
+    turn: f32,
+    radius: f32,
+    resist: f32,
+    photo: f32,
     age: i32,
     cd: i32,
     mouths: i32,
@@ -37,17 +66,89 @@ struct Creature {
     width: i32,
     kills: i32,
     gen: i32,
+    boff: i32,
+    bn: i32,
     seed: u32,
     col: u32,
-    plan: u32
+    plan: u32,
+    sig0: u32,
+    sig1: u32
 }
 
-const CR_BYTES: i64 = 108
+const CR_BYTES: i64 = 160
+
+# Morphological genes, decoded. Fractions are in [0, 1]; counts are small
+# integers.
+struct Morph {
+    size: f32,
+    elong: f32,
+    lobes: f32,
+    lobe_n: i32,
+    hue: f32,
+    sat: f32,
+    light: f32,
+    pattern: i32,
+    pscale: f32,
+    flag_n: i32,
+    flag_l: f32,
+    cilia: f32,
+    spine_n: i32,
+    spine_l: f32,
+    membrane: f32,
+    chloro: f32,
+    resist: f32,
+    mouth: f32,
+    eyespot: f32,
+    lipid: f32,
+    raptor: f32
+}
+
+export function morph_decode(g: ptr<u32>, gb: i32) -> Morph {
+    return Morph {
+        size: l_frac(g, gb, M_SIZE, 8),
+        elong: l_frac(g, gb, M_ELONG, 8),
+        lobes: l_frac(g, gb, M_LOBES, 6),
+        lobe_n: 2 + l_int(g, gb, M_LOBEN, 3),
+        hue: l_frac(g, gb, M_HUE, 8),
+        sat: l_frac(g, gb, M_SAT, 6),
+        light: l_frac(g, gb, M_LIGHT, 6),
+        pattern: l_int(g, gb, M_PATTERN, 2),
+        pscale: l_frac(g, gb, M_PSCALE, 4),
+        flag_n: l_int(g, gb, M_FLAGN, 3),
+        flag_l: l_frac(g, gb, M_FLAGL, 6),
+        cilia: l_frac(g, gb, M_CILIA, 6),
+        spine_n: l_int(g, gb, M_SPINEN, 4),
+        spine_l: l_frac(g, gb, M_SPINEL, 6),
+        membrane: l_frac(g, gb, M_MEMBRANE, 6),
+        chloro: l_frac(g, gb, M_CHLORO, 8),
+        resist: l_frac(g, gb, M_RESIST, 8),
+        mouth: l_frac(g, gb, M_MOUTH, 6),
+        eyespot: l_frac(g, gb, M_EYESPOT, 4),
+        lipid: l_frac(g, gb, M_LIPID, 4),
+        raptor: l_frac(g, gb, M_RAPTOR, 4)
+    }
+}
+
+# A unicellular form for the census: the morphology rounded to a few
+# levels per trait, hashed. Cells that look alike count as one form.
+export function morph_plan(m: Morph) -> u32 {
+    let mut h: u32 = 2166136261 as u32
+    let q: array<i32, 12> = [(m.size * 4.0 + 0.5) as i32, (m.elong * 3.0 + 0.5) as i32, m.flag_n,
+                             (m.cilia * 3.0 + 0.5) as i32, m.spine_n / 4, (m.chloro * 3.0 + 0.5) as i32,
+                             (m.raptor * 3.0 + 0.5) as i32, (m.eyespot * 2.0 + 0.5) as i32,
+                             (m.membrane * 3.0 + 0.5) as i32, m.lobe_n, (m.lobes * 2.0 + 0.5) as i32,
+                             (m.mouth * 2.0 + 0.5) as i32]
+    for k in 0 to 12 {
+        h = (h ^ (q[k] as u32)) * (16777619 as u32)
+    }
+    return h
+}
 
 # Per-cell contribution to mass and to upkeep, indexed by cell type.
 function l_cell_mass(t: i32) -> f32 {
     if t == CELL_ARMOR { return 2.0 }
     if t == CELL_EYE { return 0.5 }
+    if t == CELL_PHOTO { return 0.7 }
     if t == 0 { return 0.0 }
     return 1.0
 }
@@ -58,74 +159,57 @@ function l_cell_upkeep(t: i32) -> f32 {
     if t == CELL_MOUTH { return 1.2 }
     if t == CELL_ARMOR { return 0.8 }
     if t == CELL_STORE { return 0.5 }
+    if t == CELL_PHOTO { return 0.5 }
     if t == 0 { return 0.0 }
     return 1.0
 }
 
-# Develop slot i from its genome and derive its phenotype.
-export function express(c: ptr<Creature>, g: ptr<u32>, dev: ptr<u32>, body: ptr<u8>,
-                        brain: ptr<f32>, i: i32) -> void {
+# Scratch for expression: the developmental grid and an expressed program.
+struct Expr {
+    dev: DevScratch,
+    prog: ptr<u32>
+}
+
+export function expr_new() -> Expr {
+    return Expr { dev: dev_scratch(), prog: alloc_u32_words(DEVX_WORDS) }
+}
+
+function alloc_u32_words(n: i32) -> ptr<u32> {
+    return alloc_zeroed((n as i64) * 4) as ptr<u32>
+}
+
+# Developmental rounds from the genome.
+export function dev_rounds(g: ptr<u32>, gb: i32) -> i32 {
+    return 1 + l_dosage(g, gb, M_ROUNDS, 12)
+}
+
+# Express slot i: decode the brain, build the body into cells[off..], set
+# the record's phenotype. Returns the number of body cells.
+export function express(c: ptr<Creature>, g: ptr<u32>, brain: ptr<f32>, i: i32,
+                        mode: i32, dims: i32, x: ptr<Expr>, cells: ptr<u32>, off: i32) -> i32 {
     let gb: i32 = i * L_WORDS
-    l_dev_express(g, gb, dev, i * 4)
-    develop(dev, i * 4, body, i * BODY_CELLS)
-    let bb: i32 = i * BODY_CELLS
-    let mut mass: f32 = 0.0
-    let mut upk: f32 = 0.0
-    let mut cells: i32 = 0
-    for k in 0 to BODY_CELLS {
-        let t: i32 = body[bb + k] as i32
-        mass = mass + l_cell_mass(t)
-        upk = upk + l_cell_upkeep(t)
-        if t != 0 { cells = cells + 1 }
+    let m: Morph = morph_decode(g, gb)
+    let mut n: i32 = 1
+    if mode == MODE_MORPH {
+        cells[off] = cell_pack(0, 0, 0, CELL_CORE, 8, 0)
+        express_morph(c, i, m)
+        # Mates recognise each other by morphology: the morphological loci
+        # of both homologs folded together.
+        c[i].sig0 = (g[gb] | g[gb + L_CHROMS]) ^ (((g[gb + 2] | g[gb + L_CHROMS + 2]) << (16 as u32))
+                    | ((g[gb + 2] | g[gb + L_CHROMS + 2]) >> (16 as u32)))
+        c[i].sig1 = (g[gb + 1] | g[gb + L_CHROMS + 1]) ^ (((g[gb + 3] | g[gb + L_CHROMS + 3]) << (16 as u32))
+                    | ((g[gb + 3] | g[gb + L_CHROMS + 3]) >> (16 as u32)))
+    } else {
+        prog_express(g, gb, x.prog, 0)
+        n = develop(x.prog, 0, dims, dev_rounds(g, gb), &x.dev, cells, off)
+        express_cells(c, i, cells, off, n, mode == MODE_COMBINED, m)
+        let sig: u64 = prog_signature(x.prog, 0)
+        c[i].sig0 = (sig & (0xffffffff as u64)) as u32
+        c[i].sig1 = (sig >> (32 as u64)) as u32
     }
-    let motors: i32 = count_cells(body, bb, CELL_MOTOR)
-    let eyes: i32 = count_cells(body, bb, CELL_EYE)
-    let mouths: i32 = count_cells(body, bb, CELL_MOUTH)
-    let spikes: i32 = count_cells(body, bb, CELL_SPIKE)
-    let armor: i32 = count_cells(body, bb, CELL_ARMOR)
-    let stores: i32 = count_cells(body, bb, CELL_STORE)
-    c[i].mass = mass
-    c[i].upkeep = upk
-    c[i].cells = cells
-    # Swimming. Motors push; the water resists in proportion to the body's
-    # frontal width plus skin friction on every cell. Top speed relative to
-    # the water is thrust over drag, so a narrow body swims faster on the
-    # same motors. Swimming power, and so its energy cost, is drag times
-    # speed squared.
-    let mut rows: i32 = 0
-    for y in 0 to BODY {
-        let mut any: bool = false
-        for x in 0 to BODY {
-            if body[bb + y * BODY + x] != (0 as u8) { any = true }
-        }
-        if any { rows = rows + 1 }
-    }
-    c[i].width = rows
-    let drag: f32 = 0.35 + 0.35 * (((rows - 1) / 2) as f32) + 0.03 * (cells as f32)
-    c[i].drag = drag
-    let mut v: f32 = 0.4 * (motors as f32) / drag
-    if v > 2.0 { v = 2.0 }
-    c[i].vmax = v
-    # Spikes are carnivore anatomy: they cut grazing efficiency, so a
-    # predator cannot fall back on plants when prey are scarce.
-    c[i].bite = 0.06 * (mouths as f32) / (1.0 + (spikes as f32))
-    c[i].mouths = mouths
-    c[i].attack = spikes as f32
-    c[i].defense = (armor as f32) + 0.5 * (spikes as f32)
-    c[i].ecap = 1.0 + 1.5 * mass + 3.0 * (stores as f32)
-    # Eyes on the midline see ahead; paired eyes off the midline see to the
-    # front-left and front-right.
-    let mut axial: i32 = 0
-    for x in 0 to BODY {
-        if (body[bb + 3 * BODY + x] as i32) == CELL_EYE { axial = axial + 1 }
-    }
-    let mut ef: f32 = 1.0 + 1.5 * (axial as f32)
-    if ef > 7.0 { ef = 7.0 }
-    let mut es: f32 = 1.0 + ((eyes - axial) as f32)
-    if es > 7.0 { es = 7.0 }
-    c[i].eyes = eyes
-    c[i].range = ef
-    c[i].range_side = es
+    c[i].boff = off
+    c[i].bn = n
+    c[i].resist = m.resist
     let t01: f32 = (l_dosage(g, gb, LOC_THR, 12) as f32) / 24.0
     c[i].thr = (0.35 + 0.5 * t01) * c[i].ecap
     c[i].topt = (l_dosage(g, gb, LOC_THERMAL, 16) as f32) / 32.0
@@ -133,34 +217,199 @@ export function express(c: ptr<Creature>, g: ptr<u32>, dev: ptr<u32>, body: ptr<
     let mg: i32 = l_dosage(g, gb, LOC_MARK + 10, 10)
     let mb: i32 = l_dosage(g, gb, LOC_MARK + 20, 10)
     c[i].col = (((60 + mr * 9) as u32) << 16) | (((60 + mg * 9) as u32) << 8) | ((60 + mb * 9) as u32)
-    c[i].plan = body_hash(body, bb)
+    if mode == MODE_MORPH {
+        c[i].plan = morph_plan(m)
+    } else {
+        c[i].plan = body_hash(cells, off, n)
+    }
+    c[i].h0 = 0.0
+    c[i].h1 = 0.0
+    c[i].h2 = 0.0
+    c[i].h3 = 0.0
+    c[i].thrust = 0.0
+    c[i].turn = 0.0
     for k in 0 to BRAIN_W {
         brain[i * BRAIN_W + k] = l_weight(g, gb, k)
     }
+    return n
 }
 
-# The founding genotype: core with a mouth in front and a motor behind, and
-# a brain that turns toward food and slows down over it. Everything else
-# about the founders is random or zero.
+# Phenotype of a multicellular body. With `scaled`, morphological genes
+# make each kind of cell stronger or weaker (factor 0.5 to 1.5) and the
+# stronger versions cost more to run.
+function express_cells(c: ptr<Creature>, i: i32, cells: ptr<u32>, off: i32, n: i32,
+                       scaled: bool, m: Morph) -> void {
+    let mut mass: f32 = 0.0
+    let mut upk: f32 = 0.0
+    let mut motors: i32 = 0
+    let mut eyes: i32 = 0
+    let mut mouths: i32 = 0
+    let mut spikes: i32 = 0
+    let mut armor: i32 = 0
+    let mut stores: i32 = 0
+    let mut photos: i32 = 0
+    let mut axial: i32 = 0
+    let mut r2: f32 = 0.0
+    # Frontal extent: distinct (y, z) columns facing the water ahead.
+    let cols: array<u32, 64> = [0, 0, 0, 0]
+    let mut frontal: i32 = 0
+    for k in 0 to n {
+        let cc: u32 = cells[off + k]
+        let t: i32 = cell_type(cc)
+        mass = mass + l_cell_mass(t)
+        upk = upk + l_cell_upkeep(t)
+        if t == CELL_MOTOR { motors = motors + 1 }
+        if t == CELL_EYE {
+            eyes = eyes + 1
+            if cell_y(cc) == 0 { axial = axial + 1 }
+        }
+        if t == CELL_MOUTH { mouths = mouths + 1 }
+        if t == CELL_SPIKE { spikes = spikes + 1 }
+        if t == CELL_ARMOR { armor = armor + 1 }
+        if t == CELL_STORE { stores = stores + 1 }
+        if t == CELL_PHOTO { photos = photos + 1 }
+        let x: i32 = cell_x(cc)
+        let y: i32 = cell_y(cc)
+        let z: i32 = cell_z(cc)
+        let d2: f32 = ((x * x + y * y + z * z) as f32)
+        if d2 > r2 { r2 = d2 }
+        let col: i32 = (y + 31) * 31 + (z + 15)
+        let bit: u32 = (1 as u32) << ((col & 31) as u32)
+        if (cols[col >> 5] & bit) == (0 as u32) {
+            cols[col >> 5] = cols[col >> 5] | bit
+            frontal = frontal + 1
+        }
+    }
+    let mut f_motor: f32 = 1.0
+    let mut f_spike: f32 = 1.0
+    let mut f_photo: f32 = 1.0
+    let mut f_armor: f32 = 1.0
+    let mut f_mouth: f32 = 1.0
+    let mut f_eye: f32 = 1.0
+    let mut f_store: f32 = 1.0
+    if scaled {
+        f_motor = 0.5 + m.flag_l
+        f_spike = 0.5 + m.spine_l
+        f_photo = 0.5 + m.chloro
+        f_armor = 0.5 + m.membrane
+        f_mouth = 0.5 + m.mouth
+        f_eye = 0.5 + m.eyespot
+        f_store = 0.5 + m.lipid
+        upk = upk + 0.6 * ((motors as f32) * (f_motor - 1.0) + (spikes as f32) * (f_spike - 1.0)
+                         + (photos as f32) * (f_photo - 1.0) + (armor as f32) * (f_armor - 1.0)
+                         + (mouths as f32) * (f_mouth - 1.0) + (eyes as f32) * (f_eye - 1.0))
+        if upk < 0.2 { upk = 0.2 }
+    }
+    c[i].mass = mass
+    c[i].upkeep = upk
+    c[i].cells = n
+    c[i].radius = sqrtf(r2) + 0.5
+    # Swimming. Motors push; the water resists in proportion to the body's
+    # frontal area plus skin friction on every cell. Top speed relative to
+    # the water is thrust over drag, so a narrow body swims faster on the
+    # same motors. Swimming power, and so its energy cost, is drag times
+    # speed squared.
+    c[i].width = frontal
+    let drag: f32 = 0.35 + 0.175 * ((frontal - 1) as f32) + 0.03 * (n as f32)
+    c[i].drag = drag
+    let mut v: f32 = 0.4 * (motors as f32) * f_motor / drag
+    if v > 2.5 { v = 2.5 }
+    c[i].vmax = v
+    # Spikes are carnivore anatomy: they cut grazing efficiency, so a
+    # predator cannot fall back on plants when prey are scarce.
+    c[i].bite = 0.06 * (mouths as f32) * f_mouth / (1.0 + (spikes as f32))
+    c[i].mouths = mouths
+    c[i].attack = (spikes as f32) * f_spike
+    c[i].defense = (armor as f32) * f_armor + 0.5 * (spikes as f32)
+    c[i].ecap = 1.0 + 1.5 * mass + 3.0 * (stores as f32) * f_store
+    c[i].photo = (photos as f32) * f_photo
+    # Eyes on the midline see ahead; eyes off it see to the front-left and
+    # front-right.
+    let mut ef: f32 = 1.0 + 1.5 * (axial as f32) * f_eye
+    if ef > 9.0 { ef = 9.0 }
+    let mut es: f32 = 1.0 + ((eyes - axial) as f32) * f_eye
+    if es > 9.0 { es = 9.0 }
+    c[i].eyes = eyes
+    c[i].range = ef
+    c[i].range_side = es
+}
+
+# Phenotype of a single cell from its morphological genes. Radius runs from
+# 0.5 to 2.5 world units; elongation keeps the area and narrows the front.
+function express_morph(c: ptr<Creature>, i: i32, m: Morph) -> void {
+    let r: f32 = 0.5 + 2.0 * m.size
+    let aspect: f32 = 1.0 + 2.5 * m.elong
+    let w: f32 = 2.0 * r / sqrtf(aspect)
+    let area: f32 = 3.14159265 * r * r
+    let mass: f32 = area * (0.8 + 0.6 * m.membrane)
+    let fl: f32 = (m.flag_n as f32) * (0.4 + 1.2 * m.flag_l)
+    let thrust: f32 = 1.5 * fl + 1.5 * m.cilia * w
+    let drag: f32 = 0.35 + 0.35 * w + 0.03 * area * (1.0 + 0.5 * m.lobes)
+    let mut v: f32 = 0.4 * thrust / drag
+    if v > 2.5 { v = 2.5 }
+    let spines: f32 = (m.spine_n as f32) * m.spine_l
+    c[i].mass = mass
+    c[i].upkeep = 0.7 * area + 0.8 * (m.flag_n as f32) * m.flag_l + 0.8 * m.cilia * w + 0.15 * spines
+                + 0.3 * m.chloro * area + 0.3 * m.membrane * area + 1.0 * m.eyespot + 1.0 * m.raptor
+                + 0.6 * m.mouth
+    c[i].cells = (area + 0.5) as i32
+    c[i].radius = r * sqrtf(aspect)
+    c[i].width = (w + 0.5) as i32
+    c[i].drag = drag
+    c[i].vmax = v
+    c[i].bite = 0.12 * (0.3 + r) * m.mouth / (1.0 + 3.0 * m.raptor)
+    c[i].mouths = 0
+    if m.mouth > 0.0 or m.raptor > 0.0 { c[i].mouths = 1 }
+    c[i].attack = 3.0 * m.raptor * r
+    c[i].defense = 0.3 * r + 1.8 * m.membrane + 0.25 * spines
+    c[i].ecap = 1.0 + 1.5 * mass + 12.0 * m.lipid
+    c[i].photo = 0.6 * m.chloro * area
+    c[i].eyes = 0
+    if m.eyespot > 0.0 { c[i].eyes = 1 }
+    c[i].range = 1.0 + 6.0 * m.eyespot
+    c[i].range_side = 1.0 + 4.0 * m.eyespot
+}
+
+# The founding genotype. Plan and combined modes: a core with a mouth in
+# front and a motor behind, grown in five rounds. Morph mode: a small round
+# flagellate with a cytostome. Both get a brain that turns toward food and
+# slows down over it, a silent hidden layer, and middling values for the
+# morphological genes, so combined mode starts where plan mode does.
 export function luca(g: ptr<u32>, i: i32, st: ptr<u32>) -> void {
     let gb: i32 = i * L_WORDS
     for w in 0 to L_WORDS {
         g[gb + w] = 0 as u32
     }
-    l_set_gene(g, gb, CELL_CORE, 0, (8 | CELL_MOUTH) as u32)
-    l_set_gene(g, gb, CELL_CORE, 2, (8 | CELL_MOTOR) as u32)
+    prog_set(g, gb, 0, make_gene0(CELL_CORE, 0, grow_to(1), 0, grow_to(2), 8), make_gene1(0, 0, 0, 0))
+    prog_set(g, gb, 1, make_gene0(CELL_MOUTH, 0, 0, 0, 0, 8), make_gene1(0, 0, 0, 0))
+    prog_set(g, gb, 2, make_gene0(CELL_MOTOR, 0, 0, 0, 0, 8), make_gene1(0, 0, 0, 0))
+    l_set_dosage(g, gb, M_ROUNDS, 12, 4)
+    l_set_dosage(g, gb, M_SIZE, 8, 4)
+    l_set_dosage(g, gb, M_ELONG, 8, 4)
+    l_set_int(g, gb, M_FLAGN, 3, 1)
+    l_set_dosage(g, gb, M_FLAGL, 6, 6)
+    l_set_dosage(g, gb, M_SPINEL, 6, 6)
+    l_set_dosage(g, gb, M_CHLORO, 8, 0)
+    l_set_dosage(g, gb, M_MEMBRANE, 6, 6)
+    l_set_dosage(g, gb, M_MOUTH, 6, 6)
+    l_set_dosage(g, gb, M_EYESPOT, 4, 4)
+    l_set_dosage(g, gb, M_LIPID, 4, 4)
+    l_set_dosage(g, gb, M_SAT, 6, 7)
+    l_set_dosage(g, gb, M_LIGHT, 6, 6)
     for k in 0 to BRAIN_W {
         l_set_weight(g, gb, k, 0.0)
     }
-    l_set_weight(g, gb, 0, 2.5)
-    l_set_weight(g, gb, 2, -2.5)
-    l_set_weight(g, gb, BRAIN_IN + 1, -1.5)
-    l_set_weight(g, gb, BRAIN_IN + 6, 1.0)
+    l_set_weight(g, gb, brain_w_out(0, 0), 2.5)
+    l_set_weight(g, gb, brain_w_out(0, 2), -2.5)
+    l_set_weight(g, gb, brain_w_out(1, 1), -1.5)
+    l_set_weight(g, gb, brain_w_out(1, 9), 1.0)
     # Thermal and threshold loci at frequency one half.
     for h in 0 to 2 {
-        let hb: i32 = gb + h * L_CHROMS
-        g[hb + 3] = (g[hb + 3] & MASK_LO16) | (rng_word(st) & MASK_HI16)
-        let thr_bits: u32 = rng_word(st) & (low_mask(12) << (20 as u32))
-        g[hb + 6] = (g[hb + 6] & invert32(low_mask(12) << (20 as u32))) | thr_bits
+        for k in 0 to 16 {
+            l_set_locus(g, gb + h * L_CHROMS, LOC_THERMAL + k, (rng_next(st) & (1 as u32)) == (1 as u32))
+        }
+        for k in 0 to 12 {
+            l_set_locus(g, gb + h * L_CHROMS, LOC_THR + k, (rng_next(st) & (1 as u32)) == (1 as u32))
+        }
     }
 }

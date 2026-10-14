@@ -1,0 +1,140 @@
+# Headless renders of the life world: stills and frame sequences, at any
+# size, with no window. For checking the picture and for the project page.
+#
+#   GW_PRESET  preset (life/habitat.flow), default 0, the ocean
+#   GW_MODE    0 body plan, 1 morphology, 2 combined; default per preset
+#   GW_DIMS    2 or 3 (body dimensions), default 2
+#   GW_TICKS   ticks to run before the first frame, default 3000
+#   GW_W GW_H  frame size, default 1920 x 1200
+#   GW_VIEW    2 or 3, default 2
+#   GW_STYLE   0 natural, 1 bright-field, 2 dark-field, default per habitat
+#   GW_ZOOM    zoom factor over the whole-world view, default 1
+#   GW_FOLLOW  1: select an organism, show the inspector, follow it
+#   GW_FRAMES  frames to write, default 1; GW_STEP ticks between them
+#   GW_HUD     0 hides the overlay
+#   GW_ORBIT   3D view: radians the camera turns per frame
+#   GW_PITCH   3D view: camera elevation in radians
+#   GW_OUT     path prefix, default out/shot; frames are PREFIX_0000.ppm
+#
+# Run: ./run.sh shot
+
+import "stdlib/memory.flow"
+import gsim.params
+import glife.lconfig
+import glife.lworld
+import glife.census
+import glife.habitat
+import gviz.fb
+import gviz.camera
+import gviz.view
+import gviz.view3d
+
+@cEmbed("#include <stdio.h>
+static void shot_name_c(uint8_t* buf, const char* prefix, int32_t k) {
+    snprintf((char*)buf, 512, \"%s_%04d.ppm\", prefix, k);
+}")
+
+extern {
+    function getenv(name: string) -> ptr<u8>
+    function atoi(s: ptr<u8>) -> i32
+    function atof(s: ptr<u8>) -> f64
+    function shot_name_c(buf: ptr<u8>, prefix: string, k: i32) -> void
+}
+
+function env_i(name: string, dflt: i32) -> i32 {
+    let v: ptr<u8> = getenv(name)
+    if v == null { return dflt }
+    return atoi(v)
+}
+
+function env_f(name: string, dflt: f32) -> f32 {
+    let v: ptr<u8> = getenv(name)
+    if v == null { return dflt }
+    return atof(v) as f32
+}
+
+function step_census(l: ptr<Life>, cs: ptr<Census>) -> void {
+    life_step(l)
+    census_energy(cs, l.gain_graze, l.gain_scav, l.gain_photo, l.gain_meat)
+    if (l.tick % (64 as u32)) == (0 as u32) {
+        census_take(cs, l.cr, l.n)
+        census_genomes(cs, l.cr, l.genome, l.n)
+        census_selection(cs, l.par_v, l.par_w, l.par_n, l.fluid.strength)
+        l.par_v = 0.0
+        l.par_w = 0.0
+        l.par_n = 0.0
+        census_record(cs, l.n)
+    }
+}
+
+function main() -> i32 {
+    let preset: i32 = env_i("GW_PRESET", P_OCEAN)
+    let mode: i32 = env_i("GW_MODE", preset_mode(preset))
+    let dims: i32 = env_i("GW_DIMS", 2)
+    let ticks: i32 = env_i("GW_TICKS", 3000)
+    let w: i32 = env_i("GW_W", 1920)
+    let h: i32 = env_i("GW_H", 1200)
+    let frames: i32 = env_i("GW_FRAMES", 1)
+    let gap: i32 = env_i("GW_STEP", 4)
+    let mut out: ptr<u8> = getenv("GW_OUT")
+    let mut prefix: string = "out/shot"
+    if out != null { prefix = out as string }
+    let mut l: Life = life_create(params_seed(20261014 as u32), preset, mode, dims)
+    let mut cs: Census = census_new()
+    let mut v: View = view_new(w, h)
+    view_reset(&v, &l)
+    v.view3d = env_i("GW_VIEW", 2) == 3
+    v.style = env_i("GW_STYLE", v.style)
+    v.hud.show = env_i("GW_HUD", 1) == 1
+    let orbit: f32 = env_f("GW_ORBIT", 0.0)
+    v.cam3.pitch = env_f("GW_PITCH", v.cam3.pitch)
+    let zoom: f32 = env_f("GW_ZOOM", 1.0)
+    v.cam.scale = v.cam.scale * zoom
+    v.cam3.dist = v.cam3.dist / zoom
+    for t in 0 to ticks {
+        step_census(&l, &cs)
+        if l.n == 0 {
+            printf("extinct at tick %d\n", t)
+            return 1
+        }
+    }
+    census_take(&cs, l.cr, l.n)
+    census_genomes(&cs, l.cr, l.genome, l.n)
+    let mut sel_seed: u32 = 0 as u32
+    if env_i("GW_FOLLOW", 0) == 1 {
+        # The organism with the most cells, so the inspector has something
+        # to show.
+        let mut best: i32 = 0
+        for i in 0 to l.n {
+            if l.cr[i].bn * 4 + (l.cr[i].attack as i32) > l.cr[best].bn * 4 + (l.cr[best].attack as i32) { best = i }
+        }
+        sel_seed = l.cr[best].seed
+        v.cam.cx = l.cr[best].px
+        v.cam.cy = l.cr[best].py
+        v.cam3.tx = l.cr[best].px
+        v.cam3.ty = l.cr[best].py
+    }
+    let name: ptr<u8> = alloc_zeroed(512) as ptr<u8>
+    for k in 0 to frames {
+        let mut sel: i32 = -1
+        if sel_seed != (0 as u32) {
+            for i in 0 to l.n {
+                if l.cr[i].seed == sel_seed { sel = i }
+            }
+            view_follow(&v, &l, sel)
+        }
+        view_tick(&v, &l, gap)
+        v.cam3.yaw = v.cam3.yaw + orbit
+        let f: Frame = view_render(&v, &l, &cs, preset, gap, false, sel, 60.0)
+        shot_name_c(name, prefix, k)
+        if !fb_save_ppm(f, name as string) {
+            printf("could not write %s\n", name as string)
+            return 1
+        }
+        for t in 0 to gap {
+            step_census(&l, &cs)
+        }
+    }
+    printf("wrote %d frames, %d organisms at tick %u\n", frames, l.n, l.tick)
+    return 0
+}

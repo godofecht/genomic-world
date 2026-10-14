@@ -1,0 +1,137 @@
+# Typography: anti-aliased system-font text drawn into an RGBX frame
+# through CoreText. Three faces: the system font, its bold weight, and the
+# system monospaced font for numbers that change every frame.
+#
+# A bitmap context over the frame is made once per frame buffer and reused;
+# fonts are cached by face and size. Coordinates are frame pixels with row
+# 0 at the top; (x, y) is the top-left of the line box.
+
+@cEmbed("#include <CoreGraphics/CoreGraphics.h>
+#include <CoreText/CoreText.h>
+
+#define TYPO_CTX 4
+#define TYPO_FONTS 48
+static void* typo_buf_[TYPO_CTX];
+static CGContextRef typo_ctx_[TYPO_CTX];
+static int typo_w_[TYPO_CTX];
+static int typo_h_[TYPO_CTX];
+static CTFontRef typo_font_[TYPO_FONTS];
+static int typo_key_[TYPO_FONTS];
+static CGColorSpaceRef typo_cs_ = 0;
+
+static CGContextRef typo_ctx(void* buf, int w, int h) {
+    if (!typo_cs_) typo_cs_ = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    int free_slot = -1;
+    for (int k = 0; k < TYPO_CTX; k++) {
+        if (typo_buf_[k] == buf && typo_w_[k] == w && typo_h_[k] == h) return typo_ctx_[k];
+        if (!typo_buf_[k] && free_slot < 0) free_slot = k;
+    }
+    if (free_slot < 0) {
+        free_slot = 0;
+        CGContextRelease(typo_ctx_[0]);
+    }
+    CGContextRef c = CGBitmapContextCreate(buf, (size_t)w, (size_t)h, 8, (size_t)w * 4u, typo_cs_,
+                                           kCGBitmapByteOrderDefault | kCGImageAlphaNoneSkipLast);
+    CGContextSetShouldSmoothFonts(c, false);
+    CGContextSetShouldAntialias(c, true);
+    CGContextSetTextMatrix(c, CGAffineTransformIdentity);
+    typo_buf_[free_slot] = buf;
+    typo_ctx_[free_slot] = c;
+    typo_w_[free_slot] = w;
+    typo_h_[free_slot] = h;
+    return c;
+}
+
+static CTFontRef typo_font(int face, int size) {
+    int key = face * 1000 + size;
+    for (int k = 0; k < TYPO_FONTS; k++) {
+        if (typo_font_[k] && typo_key_[k] == key) return typo_font_[k];
+    }
+    CTFontUIFontType t = kCTFontUIFontSystem;
+    if (face == 1) t = kCTFontUIFontEmphasizedSystem;
+    if (face == 2) t = kCTFontUIFontUserFixedPitch;
+    CTFontRef f = CTFontCreateUIFontForLanguage(t, (CGFloat)size, NULL);
+    for (int k = 0; k < TYPO_FONTS; k++) {
+        if (!typo_font_[k]) { typo_font_[k] = f; typo_key_[k] = key; return f; }
+    }
+    CFRelease(typo_font_[0]);
+    typo_font_[0] = f;
+    typo_key_[0] = key;
+    return f;
+}
+
+/* Draw (or with draw == 0 only measure) a line. Returns its advance width
+ * in pixels. rgb is 0xRRGGBB; alpha is 0..255. */
+static int32_t typo_line(uint32_t* buf, int32_t w, int32_t h, int32_t x, int32_t y, const char* s,
+                         int32_t face, int32_t size, int32_t rgb, int32_t alpha, int32_t draw) {
+    if (!s || !s[0] || size <= 0) return 0;
+    CTFontRef font = typo_font(face, size);
+    CFStringRef str = CFStringCreateWithCString(NULL, s, kCFStringEncodingUTF8);
+    if (!str) return 0;
+    CGFloat comp[4] = { ((rgb >> 16) & 255) / 255.0, ((rgb >> 8) & 255) / 255.0,
+                        (rgb & 255) / 255.0, alpha / 255.0 };
+    if (!typo_cs_) typo_cs_ = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    CGColorRef col = CGColorCreate(typo_cs_, comp);
+    const void* keys[] = { kCTFontAttributeName, kCTForegroundColorAttributeName };
+    const void* vals[] = { font, col };
+    CFDictionaryRef attrs = CFDictionaryCreate(NULL, keys, vals, 2, &kCFTypeDictionaryKeyCallBacks,
+                                               &kCFTypeDictionaryValueCallBacks);
+    CFAttributedStringRef as = CFAttributedStringCreate(NULL, str, attrs);
+    CTLineRef line = CTLineCreateWithAttributedString(as);
+    CGFloat ascent = 0, descent = 0, leading = 0;
+    double adv = CTLineGetTypographicBounds(line, &ascent, &descent, &leading);
+    if (draw) {
+        CGContextRef c = typo_ctx(buf, w, h);
+        CGContextSetTextPosition(c, (CGFloat)x, (CGFloat)h - (CGFloat)y - ascent);
+        CTLineDraw(line, c);
+    }
+    CFRelease(line);
+    CFRelease(as);
+    CFRelease(attrs);
+    CGColorRelease(col);
+    CFRelease(str);
+    return (int32_t)(adv + 0.5);
+}
+
+/* Numbers as text, in a ring of buffers so a few can be live at once. */
+static char typo_ring_[64][48];
+static int typo_ring_i_ = 0;
+static const char* typo_fmt_c(double v, int32_t dec, const char* prefix, const char* suffix) {
+    char* b = typo_ring_[typo_ring_i_];
+    typo_ring_i_ = (typo_ring_i_ + 1) & 63;
+    if (dec < 0) {
+        long long n = (long long)(v < 0 ? v - 0.5 : v + 0.5);
+        char digits[32];
+        int len = snprintf(digits, sizeof digits, \"%lld\", n < 0 ? -n : n);
+        int o = 0;
+        o += snprintf(b + o, 48 - o, \"%s%s\", prefix, n < 0 ? \"-\" : \"\");
+        for (int k = 0; k < len && o < 40; k++) {
+            if (k > 0 && (len - k) % 3 == 0) b[o++] = ',';
+            b[o++] = digits[k];
+        }
+        b[o] = 0;
+        snprintf(b + o, 48 - o, \"%s\", suffix);
+        return b;
+    }
+    snprintf(b, 48, \"%s%.*f%s\", prefix, dec, v, suffix);
+    return b;
+}")
+
+extern {
+    function typo_line(buf: ptr<u32>, w: i32, h: i32, x: i32, y: i32, s: string,
+                       face: i32, size: i32, rgb: i32, alpha: i32, draw: i32) -> i32
+    function typo_fmt_c(v: f64, dec: i32, prefix: string, suffix: string) -> string
+}
+
+# A number as text: dec < 0 means an integer with thousands separators.
+export function num(v: f64, dec: i32) -> string {
+    return typo_fmt_c(v, dec, "", "")
+}
+
+export function num_fix(v: f64, dec: i32, prefix: string, suffix: string) -> string {
+    return typo_fmt_c(v, dec, prefix, suffix)
+}
+
+const FACE_TEXT: i32 = 0
+const FACE_BOLD: i32 = 1
+const FACE_MONO: i32 = 2

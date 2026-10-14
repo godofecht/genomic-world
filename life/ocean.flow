@@ -41,3 +41,23 @@ extern {
 export function ocean_strength(o: ptr<Ocean>) -> f32 {
     return (0.1 + 0.9 * (0.5 - 0.5 * cos(o.phase))) as f32
 }
+
+# Day and night. Light at the surface follows the sun's elevation, clipped
+# at the horizon, so about 40% of each day is dark.
+flow Sun {
+    state day: f64 = 0.0
+    param omega: f64 = 0.0026179939
+
+    day evolves as omega
+}
+
+extern {
+    function sin(x: f64) -> f64
+}
+
+export function sun_light(s: ptr<Sun>) -> f32 {
+    let mut v: f64 = (sin(s.day) + 0.25) / 1.25
+    if v < 0.0 { v = 0.0 }
+    if v > 1.0 { v = 1.0 }
+    return v as f32
+}

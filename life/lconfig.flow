@@ -4,31 +4,80 @@
 # than the genomic world's.
 const LIFE_MAX: i32 = 32768
 
-# Genome: eight chromosomes of 32 loci, diploid. Words 0-7 maternal,
-# 8-15 paternal; chromosome c is (word c, word c + 8).
-const L_CHROMS: i32 = 8
-const L_WORDS: i32 = 16
-const L_LOCI: i32 = 256
+# Genome, per haplotype: a fixed part of twenty 32-locus chromosomes
+# (morphology, physiology, brain, markers), and a developmental program of
+# a variable number of cell-identity genes, two words each. Duplication and
+# deletion change the program's length, so the number of distinct cell
+# identities can grow without a set limit; DEVG_MAX is only the room
+# allocated per haplotype.
+#
+# Words per organism: [fixed maternal 20][fixed paternal 20]
+#                     [program maternal: length, genes][program paternal]
+const L_CHROMS: i32 = 20
+const L_FIXED: i32 = 40
+const L_LOCI: i32 = 640
+const DEVG_MAX: i32 = 48
+const DEVH: i32 = 97
+const L_WORDS: i32 = 234
 
-# Body: a 7 x 7 lattice grown from a core cell at its centre.
-const BODY: i32 = 7
-const BODY_CELLS: i32 = 49
-const DEV_STEPS: i32 = 4
+# Expressed program per organism: length word plus genes.
+const DEVX_WORDS: i32 = 97
+# Developmental signature for mate recognition, in words.
+const SIG_WORDS: i32 = 4
 
-# Cell types. 0 is empty.
+# Development grows a body cell by cell in a scratch grid around the core:
+# DEV_R cells each way in 2D, DEV_R3 in 3D. These bound a body's extent;
+# energy, drag and upkeep bound it long before.
+const DEV_R: i32 = 31
+const DEV_R3: i32 = 15
+# Room for body cells in the arena per organism on average; the arena
+# grows when needed.
+const ARENA_PER: i32 = 32
+
+# How the genome becomes an organism.
+#   MODE_PLAN      multicellular: cells grown by the developmental
+#                  program; each cell type has a fixed function and look
+#   MODE_MORPH     unicellular: one cell whose size, shape, pigment,
+#                  flagella, cilia, spines, eyespot, chlorophyll and so on
+#                  are quantitative genes, and set what it can do
+#   MODE_COMBINED  multicellular, and the morphological genes set how each
+#                  cell looks and how well it works
+const MODE_PLAN: i32 = 0
+const MODE_MORPH: i32 = 1
+const MODE_COMBINED: i32 = 2
+
+# Habitats.
+const HAB_OCEAN: i32 = 0
+const HAB_DISH: i32 = 1
+const HAB_SLIDE: i32 = 2
+
+# Cell types. 0 is empty. A developmental gene names its daughter type by
+# three bits (type minus one), so the numbering sets how many mutations
+# separate one type from another: from a gene that grows a core cell (000),
+# mouths, motors and photosynthetic cells are one bit away, eyes, armour
+# and spikes two, stores three.
 const CELL_CORE: i32 = 1
 const CELL_MOUTH: i32 = 2
 const CELL_MOTOR: i32 = 3
 const CELL_EYE: i32 = 4
-const CELL_ARMOR: i32 = 5
-const CELL_STORE: i32 = 6
+const CELL_PHOTO: i32 = 5
+const CELL_ARMOR: i32 = 6
 const CELL_SPIKE: i32 = 7
-const CELL_TYPES: i32 = 8
+const CELL_STORE: i32 = 8
+const CELL_TYPES: i32 = 9
 
-# Brain: 7 inputs, 2 outputs, one 6-bit additive weight per pair.
-const BRAIN_IN: i32 = 7
+# Brain: ten inputs, four hidden neurons with self-recurrence (memory), two
+# outputs that read the inputs and the hidden layer.
+const BRAIN_IN: i32 = 10
+const BRAIN_HID: i32 = 4
 const BRAIN_OUT: i32 = 2
-const BRAIN_W: i32 = 14
+# Weight blocks: input to hidden, hidden self-recurrence, then for each
+# output the inputs followed by the hidden neurons.
+const BW_IH: i32 = 0
+const BW_HH: i32 = 40
+const BW_OUT: i32 = 44
+const BW_ROW: i32 = 14
+const BRAIN_W: i32 = 72
 
 # Life history and energy.
 const L_MATURE: i32 = 25
@@ -41,11 +90,27 @@ const THERMAL_L: f32 = 0.03
 const L_ATTACK_COST: f32 = 0.004
 const L_MEAT_EFF: f32 = 0.6
 
+# Photosynthesis: energy per photosynthetic cell per tick in full sun on
+# fully fertile water. Light in a world cell is shared among the
+# photosynthetic cells in it beyond L_PHOTO_CAP of them, so autotrophs
+# compete for light as plants do.
+const L_PHOTO: f32 = 0.06
+const L_PHOTO_CAP: f32 = 6.0
+# Day length in ticks.
+const L_DAY: i32 = 2400
+
+# Detritus. A death leaves the body's biomass and any energy left as
+# detritus where it fell. Mouths scavenge it, and bacteria (implicit)
+# return it to the water as nutrient at L_REMIN per tick.
+const L_CARCASS: f32 = 0.5
+const L_REMIN: f32 = 0.004
+const L_SCAVENGE_EFF: f32 = 0.7
+
 # Mating needs developmental genotypes within this many bits of each other.
 const L_MATE_DISTANCE: i32 = 10
 
 # Mutation per locus per gamete, crossovers per chromosome.
-const L_MU: f32 = 0.001
+const L_MU: f32 = 0.0008
 const L_MAP: f32 = 1.0
 
 # Census of body plans.
@@ -60,3 +125,9 @@ const L_FOUNDERS: i32 = 3000
 # Mean number of random mutations each founder carries in its developmental
 # and brain loci: standing variation, as any real founding population has.
 const L_FOUNDER_MUTATIONS: f32 = 3.0
+
+# Events kept for the viewer: births, kills, deaths, in a ring.
+const L_EVENTS: i32 = 8192
+const EV_BIRTH: i32 = 1
+const EV_KILL: i32 = 2
+const EV_DEATH: i32 = 3

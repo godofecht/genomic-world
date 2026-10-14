@@ -1,0 +1,119 @@
+# The camera: a view of the toroidal world at some scale.
+#
+# (cx, cy) is the world point at the centre of the screen and `scale` is
+# screen pixels per world unit. The world wraps, so a world point appears
+# on screen wherever any of its periodic images falls; cam_dx and cam_dy
+# give the nearest image.
+
+import gsim.config
+
+struct Camera {
+    cx: f32,
+    cy: f32,
+    scale: f32,
+    w: i32,
+    h: i32,
+    # true on the toroidal ocean; a vessel has edges and does not repeat
+    wrap: bool
+}
+
+const CAM_MAX_SCALE: f32 = 64.0
+
+export function cam_new(w: i32, h: i32) -> Camera {
+    let mut c: Camera = Camera { cx: 128.0, cy: 128.0, scale: 1.0, w: w, h: h, wrap: true }
+    c.scale = cam_min_scale(&c)
+    return c
+}
+
+# Whole world height on screen.
+export function cam_min_scale(c: ptr<Camera>) -> f32 {
+    return (c.h as f32) / (WORLD_H as f32)
+}
+
+export function cam_wrap(v: f32, size: f32) -> f32 {
+    let mut r: f32 = v
+    while r < 0.0 { r = r + size }
+    while r >= size { r = r - size }
+    return r
+}
+
+# Signed offset of world x from the camera centre, nearest image.
+export function cam_dx(c: ptr<Camera>, wx: f32) -> f32 {
+    let size: f32 = WORLD_W as f32
+    let mut d: f32 = wx - c.cx
+    if !c.wrap { return d }
+    if d > size * 0.5 { d = d - size }
+    if d < 0.0 - size * 0.5 { d = d + size }
+    return d
+}
+
+export function cam_dy(c: ptr<Camera>, wy: f32) -> f32 {
+    let size: f32 = WORLD_H as f32
+    let mut d: f32 = wy - c.cy
+    if !c.wrap { return d }
+    if d > size * 0.5 { d = d - size }
+    if d < 0.0 - size * 0.5 { d = d + size }
+    return d
+}
+
+export function cam_sx(c: ptr<Camera>, wx: f32) -> f32 {
+    return (c.w as f32) * 0.5 + cam_dx(c, wx) * c.scale
+}
+
+export function cam_sy(c: ptr<Camera>, wy: f32) -> f32 {
+    return (c.h as f32) * 0.5 + cam_dy(c, wy) * c.scale
+}
+
+export function cam_wx(c: ptr<Camera>, sx: f32) -> f32 {
+    let x: f32 = c.cx + (sx - (c.w as f32) * 0.5) / c.scale
+    if !c.wrap { return x }
+    return cam_wrap(x, WORLD_W as f32)
+}
+
+export function cam_wy(c: ptr<Camera>, sy: f32) -> f32 {
+    let y: f32 = c.cy + (sy - (c.h as f32) * 0.5) / c.scale
+    if !c.wrap { return y }
+    return cam_wrap(y, WORLD_H as f32)
+}
+
+# Zoom by `factor`, keeping the world point under screen (sx, sy) fixed.
+export function cam_zoom_at(c: ptr<Camera>, sx: f32, sy: f32, factor: f32) -> void {
+    let wx: f32 = c.cx + (sx - (c.w as f32) * 0.5) / c.scale
+    let wy: f32 = c.cy + (sy - (c.h as f32) * 0.5) / c.scale
+    let mut s: f32 = c.scale * factor
+    let lo: f32 = cam_min_scale(c)
+    if s < lo { s = lo }
+    if s > CAM_MAX_SCALE { s = CAM_MAX_SCALE }
+    c.scale = s
+    c.cx = wx - (sx - (c.w as f32) * 0.5) / s
+    c.cy = wy - (sy - (c.h as f32) * 0.5) / s
+    cam_settle(c)
+}
+
+export function cam_pan(c: ptr<Camera>, dsx: f32, dsy: f32) -> void {
+    c.cx = c.cx - dsx / c.scale
+    c.cy = c.cy - dsy / c.scale
+    cam_settle(c)
+}
+
+# On the torus, keep the centre in range; in a vessel, keep it over the
+# world.
+export function cam_settle(c: ptr<Camera>) -> void {
+    if c.wrap {
+        c.cx = cam_wrap(c.cx, WORLD_W as f32)
+        c.cy = cam_wrap(c.cy, WORLD_H as f32)
+    } else {
+        if c.cx < 0.0 { c.cx = 0.0 }
+        if c.cy < 0.0 { c.cy = 0.0 }
+        if c.cx > (WORLD_W as f32) { c.cx = WORLD_W as f32 }
+        if c.cy > (WORLD_H as f32) { c.cy = WORLD_H as f32 }
+    }
+}
+
+# Ease the centre toward (wx, wy) by fraction k, along the shorter way
+# round the torus.
+export function cam_follow(c: ptr<Camera>, wx: f32, wy: f32, k: f32) -> void {
+    c.cx = c.cx + k * cam_dx(c, wx)
+    c.cy = c.cy + k * cam_dy(c, wy)
+    cam_settle(c)
+}

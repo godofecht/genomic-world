@@ -1,0 +1,398 @@
+# A 32-bit frame buffer and anti-aliased drawing.
+#
+# Pixels are RGBX bytes in memory, so as a little-endian u32 a pixel is
+# r | g << 8 | b << 16. Colours are passed as 0xRRGGBB and alpha as 0..255.
+#
+# Every Frame carries a clip band of rows [y0, y1). Drawing in parallel
+# gives each thread its own band of the same buffer, so no two threads
+# write the same pixel and the image does not depend on thread count.
+
+import "stdlib/memory.flow"
+
+@cEmbed("#include <stdio.h>
+static int32_t fb_ppm_c(uint32_t* px, int32_t w, int32_t h, const char* path) {
+    FILE* fp = fopen(path, \"wb\");
+    if (!fp) return 0;
+    fprintf(fp, \"P6\\n%d %d\\n255\\n\", w, h);
+    unsigned char* row = (unsigned char*)malloc((size_t)w * 3u);
+    for (int32_t y = 0; y < h; y++) {
+        for (int32_t x = 0; x < w; x++) {
+            uint32_t p = px[(size_t)y * (size_t)w + (size_t)x];
+            row[x * 3] = (unsigned char)(p & 255u);
+            row[x * 3 + 1] = (unsigned char)((p >> 8) & 255u);
+            row[x * 3 + 2] = (unsigned char)((p >> 16) & 255u);
+        }
+        fwrite(row, 1, (size_t)w * 3u, fp);
+    }
+    free(row);
+    fclose(fp);
+    return 1;
+}")
+
+extern {
+    function sqrtf(x: f32) -> f32
+    function floorf(x: f32) -> f32
+    function fb_ppm_c(px: ptr<u32>, w: i32, h: i32, path: string) -> i32
+}
+
+struct Frame {
+    w: i32,
+    h: i32,
+    px: ptr<u32>,
+    y0: i32,
+    y1: i32
+}
+
+export function fb_new(w: i32, h: i32) -> Frame {
+    let px: ptr<u32> = alloc_zeroed((w as i64) * (h as i64) * 4) as ptr<u32>
+    return Frame { w: w, h: h, px: px, y0: 0, y1: h }
+}
+
+# The same buffer clipped to rows [a, b).
+export function fb_band(f: Frame, a: i32, b: i32) -> Frame {
+    let mut lo: i32 = a
+    let mut hi: i32 = b
+    if lo < 0 { lo = 0 }
+    if hi > f.h { hi = f.h }
+    return Frame { w: f.w, h: f.h, px: f.px, y0: lo, y1: hi }
+}
+
+export function rgb_of(r: i32, g: i32, b: i32) -> i32 {
+    return (clamp255(r) << 16) | (clamp255(g) << 8) | clamp255(b)
+}
+
+export function clamp255(v: i32) -> i32 {
+    if v < 0 { return 0 }
+    if v > 255 { return 255 }
+    return v
+}
+
+export function pack(r: i32, g: i32, b: i32) -> u32 {
+    return (r as u32) | ((g as u32) << (8 as u32)) | ((b as u32) << (16 as u32))
+}
+
+export function pack_rgb(rgb: i32) -> u32 {
+    return pack((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255)
+}
+
+# Mix colour rgb into pixel o with weight a / 256.
+export function fb_mix(f: Frame, o: i32, rgb: i32, a: i32) -> void {
+    let p: u32 = f.px[o]
+    let pr: i32 = (p & (255 as u32)) as i32
+    let pg: i32 = ((p >> (8 as u32)) & (255 as u32)) as i32
+    let pb: i32 = ((p >> (16 as u32)) & (255 as u32)) as i32
+    let r: i32 = pr + ((((rgb >> 16) & 255) - pr) * a >> 8)
+    let g: i32 = pg + ((((rgb >> 8) & 255) - pg) * a >> 8)
+    let b: i32 = pb + (((rgb & 255) - pb) * a >> 8)
+    f.px[o] = pack(r, g, b)
+}
+
+# Add light: each channel gains rgb * a / 256, saturating.
+export function fb_add(f: Frame, o: i32, rgb: i32, a: i32) -> void {
+    let p: u32 = f.px[o]
+    let r: i32 = ((p & (255 as u32)) as i32) + ((((rgb >> 16) & 255) * a) >> 8)
+    let g: i32 = (((p >> (8 as u32)) & (255 as u32)) as i32) + ((((rgb >> 8) & 255) * a) >> 8)
+    let b: i32 = (((p >> (16 as u32)) & (255 as u32)) as i32) + (((rgb & 255) * a) >> 8)
+    f.px[o] = pack(clamp255(r), clamp255(g), clamp255(b))
+}
+
+export function fb_fill(f: Frame, rgb: i32) -> void {
+    let v: u32 = pack_rgb(rgb)
+    let n: i64 = (f.w as i64) * (f.h as i64)
+    let px: ptr<u32> = f.px
+    parallel for y in 0 to f.h {
+        let base: i32 = y * f.w
+        for x in 0 to f.w {
+            px[base + x] = v
+        }
+    }
+}
+
+export function fb_rect(f: Frame, x: i32, y: i32, w: i32, h: i32, rgb: i32, a: i32) -> void {
+    let mut xa: i32 = x
+    let mut ya: i32 = y
+    let mut xb: i32 = x + w
+    let mut yb: i32 = y + h
+    if xa < 0 { xa = 0 }
+    if ya < f.y0 { ya = f.y0 }
+    if xb > f.w { xb = f.w }
+    if yb > f.y1 { yb = f.y1 }
+    # Flow ranges run backwards when start > end: an empty clip must
+    # return, not loop.
+    if xa >= xb or ya >= yb { return }
+    if a >= 255 {
+        let v: u32 = pack_rgb(rgb)
+        for yy in ya to yb {
+            for xx in xa to xb {
+                f.px[yy * f.w + xx] = v
+            }
+        }
+        return
+    }
+    for yy in ya to yb {
+        for xx in xa to xb {
+            fb_mix(f, yy * f.w + xx, rgb, a)
+        }
+    }
+}
+
+# Coverage of a pixel by a shape at signed distance d (negative inside),
+# as 0..256.
+function cover(d: f32) -> i32 {
+    if d <= -0.5 { return 256 }
+    if d >= 0.5 { return 0 }
+    return ((0.5 - d) * 256.0) as i32
+}
+
+# Rounded rectangle with anti-aliased corners.
+export function fb_panel(f: Frame, x: i32, y: i32, w: i32, h: i32, rad: f32, rgb: i32, a: i32) -> void {
+    let mut ya: i32 = y
+    let mut yb: i32 = y + h
+    let mut xa: i32 = x
+    let mut xb: i32 = x + w
+    if ya < f.y0 { ya = f.y0 }
+    if yb > f.y1 { yb = f.y1 }
+    if xa < 0 { xa = 0 }
+    if xb > f.w { xb = f.w }
+    if xa >= xb or ya >= yb { return }
+    let hx: f32 = 0.5 * (w as f32)
+    let hy: f32 = 0.5 * (h as f32)
+    let cx: f32 = (x as f32) + hx
+    let cy: f32 = (y as f32) + hy
+    for yy in ya to yb {
+        let py: f32 = abs_f((yy as f32) + 0.5 - cy) - (hy - rad)
+        for xx in xa to xb {
+            let px: f32 = abs_f((xx as f32) + 0.5 - cx) - (hx - rad)
+            let mut d: f32 = 0.0
+            if px > 0.0 and py > 0.0 {
+                d = sqrtf(px * px + py * py) - rad
+            } else {
+                let mut m: f32 = px
+                if py > m { m = py }
+                d = m - rad
+            }
+            let c: i32 = cover(d)
+            if c > 0 {
+                fb_mix(f, yy * f.w + xx, rgb, (c * a) >> 8)
+            }
+        }
+    }
+}
+
+export function abs_f(v: f32) -> f32 {
+    if v < 0.0 { return 0.0 - v }
+    return v
+}
+
+# Filled disc, anti-aliased.
+export function fb_disc(f: Frame, cx: f32, cy: f32, r: f32, rgb: i32, a: i32) -> void {
+    let ya: i32 = floorf(cy - r - 1.0) as i32
+    let yb: i32 = (floorf(cy + r + 1.0) as i32) + 1
+    let xa: i32 = floorf(cx - r - 1.0) as i32
+    let xb: i32 = (floorf(cx + r + 1.0) as i32) + 1
+    let y0c: i32 = max_i(ya, f.y0)
+    let y1c: i32 = min_i(yb, f.y1)
+    let x0c: i32 = max_i(xa, 0)
+    let x1c: i32 = min_i(xb, f.w)
+    if y0c >= y1c or x0c >= x1c { return }
+    for yy in y0c to y1c {
+        let dy: f32 = (yy as f32) + 0.5 - cy
+        for xx in x0c to x1c {
+            let dx: f32 = (xx as f32) + 0.5 - cx
+            let c: i32 = cover(sqrtf(dx * dx + dy * dy) - r)
+            if c > 0 {
+                fb_mix(f, yy * f.w + xx, rgb, (c * a) >> 8)
+            }
+        }
+    }
+}
+
+# Disc shaded as a lit sphere: brighter toward the upper left, darker rim.
+export function fb_ball(f: Frame, cx: f32, cy: f32, r: f32, rgb: i32, a: i32) -> void {
+    let ya: i32 = floorf(cy - r - 1.0) as i32
+    let yb: i32 = (floorf(cy + r + 1.0) as i32) + 1
+    let xa: i32 = floorf(cx - r - 1.0) as i32
+    let xb: i32 = (floorf(cx + r + 1.0) as i32) + 1
+    let cr: i32 = (rgb >> 16) & 255
+    let cg: i32 = (rgb >> 8) & 255
+    let cb: i32 = rgb & 255
+    let inv: f32 = 1.0 / (r + 0.001)
+    let y0c: i32 = max_i(ya, f.y0)
+    let y1c: i32 = min_i(yb, f.y1)
+    let x0c: i32 = max_i(xa, 0)
+    let x1c: i32 = min_i(xb, f.w)
+    if y0c >= y1c or x0c >= x1c { return }
+    for yy in y0c to y1c {
+        let dy: f32 = (yy as f32) + 0.5 - cy
+        for xx in x0c to x1c {
+            let dx: f32 = (xx as f32) + 0.5 - cx
+            let d: f32 = sqrtf(dx * dx + dy * dy)
+            let c: i32 = cover(d - r)
+            if c > 0 {
+                # Light from the upper left; a soft rim at the edge.
+                let u: f32 = d * inv
+                let lit: f32 = 1.0 - 0.35 * u * u - 0.25 * (dx + dy) * inv
+                let sh: f32 = 0.55 + 0.5 * lit
+                let col: i32 = rgb_of((((cr as f32) * sh) as i32), (((cg as f32) * sh) as i32),
+                                      (((cb as f32) * sh) as i32))
+                fb_mix(f, yy * f.w + xx, col, (c * a) >> 8)
+            }
+        }
+    }
+}
+
+# Soft additive glow: light falling off as (1 - d / r)^2.
+export function fb_glow(f: Frame, cx: f32, cy: f32, r: f32, rgb: i32, a: i32) -> void {
+    let ya: i32 = floorf(cy - r) as i32
+    let yb: i32 = (floorf(cy + r) as i32) + 1
+    let xa: i32 = floorf(cx - r) as i32
+    let xb: i32 = (floorf(cx + r) as i32) + 1
+    let inv: f32 = 1.0 / (r + 0.001)
+    let y0c: i32 = max_i(ya, f.y0)
+    let y1c: i32 = min_i(yb, f.y1)
+    let x0c: i32 = max_i(xa, 0)
+    let x1c: i32 = min_i(xb, f.w)
+    if y0c >= y1c or x0c >= x1c { return }
+    for yy in y0c to y1c {
+        let dy: f32 = (yy as f32) + 0.5 - cy
+        for xx in x0c to x1c {
+            let dx: f32 = (xx as f32) + 0.5 - cx
+            let u: f32 = 1.0 - sqrtf(dx * dx + dy * dy) * inv
+            if u > 0.0 {
+                fb_add(f, yy * f.w + xx, rgb, ((u * u * (a as f32))) as i32)
+            }
+        }
+    }
+}
+
+# Ring of the given stroke width.
+export function fb_ring(f: Frame, cx: f32, cy: f32, r: f32, width: f32, rgb: i32, a: i32) -> void {
+    let ro: f32 = r + width * 0.5
+    let ya: i32 = floorf(cy - ro - 1.0) as i32
+    let yb: i32 = (floorf(cy + ro + 1.0) as i32) + 1
+    let xa: i32 = floorf(cx - ro - 1.0) as i32
+    let xb: i32 = (floorf(cx + ro + 1.0) as i32) + 1
+    let y0c: i32 = max_i(ya, f.y0)
+    let y1c: i32 = min_i(yb, f.y1)
+    let x0c: i32 = max_i(xa, 0)
+    let x1c: i32 = min_i(xb, f.w)
+    if y0c >= y1c or x0c >= x1c { return }
+    for yy in y0c to y1c {
+        let dy: f32 = (yy as f32) + 0.5 - cy
+        for xx in x0c to x1c {
+            let dx: f32 = (xx as f32) + 0.5 - cx
+            let c: i32 = cover(abs_f(sqrtf(dx * dx + dy * dy) - r) - width * 0.5)
+            if c > 0 {
+                fb_mix(f, yy * f.w + xx, rgb, (c * a) >> 8)
+            }
+        }
+    }
+}
+
+# Thick anti-aliased segment with round caps.
+export function fb_line(f: Frame, x0: f32, y0: f32, x1: f32, y1: f32, width: f32, rgb: i32, a: i32) -> void {
+    let hw: f32 = width * 0.5
+    let mut lx: f32 = x0
+    let mut hx: f32 = x1
+    if x1 < x0 {
+        lx = x1
+        hx = x0
+    }
+    let mut ly: f32 = y0
+    let mut hy: f32 = y1
+    if y1 < y0 {
+        ly = y1
+        hy = y0
+    }
+    let ya: i32 = floorf(ly - hw - 1.0) as i32
+    let yb: i32 = (floorf(hy + hw + 1.0) as i32) + 1
+    let xa: i32 = floorf(lx - hw - 1.0) as i32
+    let xb: i32 = (floorf(hx + hw + 1.0) as i32) + 1
+    let ex: f32 = x1 - x0
+    let ey: f32 = y1 - y0
+    let ll: f32 = ex * ex + ey * ey + 0.000001
+    let y0c: i32 = max_i(ya, f.y0)
+    let y1c: i32 = min_i(yb, f.y1)
+    let x0c: i32 = max_i(xa, 0)
+    let x1c: i32 = min_i(xb, f.w)
+    if y0c >= y1c or x0c >= x1c { return }
+    for yy in y0c to y1c {
+        let py: f32 = (yy as f32) + 0.5 - y0
+        for xx in x0c to x1c {
+            let px: f32 = (xx as f32) + 0.5 - x0
+            let mut t: f32 = (px * ex + py * ey) / ll
+            if t < 0.0 { t = 0.0 }
+            if t > 1.0 { t = 1.0 }
+            let qx: f32 = px - t * ex
+            let qy: f32 = py - t * ey
+            let c: i32 = cover(sqrtf(qx * qx + qy * qy) - hw)
+            if c > 0 {
+                fb_mix(f, yy * f.w + xx, rgb, (c * a) >> 8)
+            }
+        }
+    }
+}
+
+# Filled triangle, anti-aliased by edge distance.
+export function fb_tri(f: Frame, ax: f32, ay: f32, bx: f32, by: f32, cx: f32, cy: f32, rgb: i32, a: i32) -> void {
+    let mut lx: f32 = ax
+    let mut hx: f32 = ax
+    let mut ly: f32 = ay
+    let mut hy: f32 = ay
+    if bx < lx { lx = bx }
+    if cx < lx { lx = cx }
+    if bx > hx { hx = bx }
+    if cx > hx { hx = cx }
+    if by < ly { ly = by }
+    if cy < ly { ly = cy }
+    if by > hy { hy = by }
+    if cy > hy { hy = cy }
+    # Orientation, so the inside is where all three edge distances are
+    # negative.
+    let area: f32 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+    let mut sgn: f32 = 1.0
+    if area < 0.0 { sgn = -1.0 }
+    let l0: f32 = sqrtf((bx - ax) * (bx - ax) + (by - ay) * (by - ay)) + 0.0001
+    let l1: f32 = sqrtf((cx - bx) * (cx - bx) + (cy - by) * (cy - by)) + 0.0001
+    let l2: f32 = sqrtf((ax - cx) * (ax - cx) + (ay - cy) * (ay - cy)) + 0.0001
+    let ya: i32 = floorf(ly - 1.0) as i32
+    let yb: i32 = (floorf(hy + 1.0) as i32) + 1
+    let xa: i32 = floorf(lx - 1.0) as i32
+    let xb: i32 = (floorf(hx + 1.0) as i32) + 1
+    let y0c: i32 = max_i(ya, f.y0)
+    let y1c: i32 = min_i(yb, f.y1)
+    let x0c: i32 = max_i(xa, 0)
+    let x1c: i32 = min_i(xb, f.w)
+    if y0c >= y1c or x0c >= x1c { return }
+    for yy in y0c to y1c {
+        let py: f32 = (yy as f32) + 0.5
+        for xx in x0c to x1c {
+            let px: f32 = (xx as f32) + 0.5
+            let d0: f32 = 0.0 - sgn * ((bx - ax) * (py - ay) - (by - ay) * (px - ax)) / l0
+            let d1: f32 = 0.0 - sgn * ((cx - bx) * (py - by) - (cy - by) * (px - bx)) / l1
+            let d2: f32 = 0.0 - sgn * ((ax - cx) * (py - cy) - (ay - cy) * (px - cx)) / l2
+            let mut d: f32 = d0
+            if d1 > d { d = d1 }
+            if d2 > d { d = d2 }
+            let c: i32 = cover(d)
+            if c > 0 {
+                fb_mix(f, yy * f.w + xx, rgb, (c * a) >> 8)
+            }
+        }
+    }
+}
+
+export function max_i(a: i32, b: i32) -> i32 {
+    if a > b { return a }
+    return b
+}
+
+export function min_i(a: i32, b: i32) -> i32 {
+    if a < b { return a }
+    return b
+}
+
+# Binary PPM, for headless checks and stills.
+export function fb_save_ppm(f: Frame, path: string) -> bool {
+    return fb_ppm_c(f.px, f.w, f.h, path) == 1
+}

@@ -1,0 +1,177 @@
+# One frame of the life world: the scene, tracers, organisms, effects and
+# the overlay, in the 2D view or the 3D view, into one of two frame
+# buffers (the other may still be on screen).
+
+import gsim.config
+import glife.lconfig
+import glife.lworld
+import glife.census
+import .fb
+import .camera
+import .scene
+import .bodies
+import .tracers
+import .hud
+import .view3d
+
+struct View {
+    a: Frame,
+    b: Frame,
+    flip: bool,
+    w: i32,
+    h: i32,
+    cam: Camera,
+    cam3: Cam3,
+    scene: Scene,
+    dl: DrawList,
+    tr: Tracers,
+    v3: View3,
+    hud: Hud,
+    style: i32,
+    flow_view: bool,
+    view3d: bool,
+    clock: f32
+}
+
+export function view_new(w: i32, h: i32) -> View {
+    let mut u: f32 = (h as f32) / 982.0
+    if u < 1.0 { u = 1.0 }
+    return View {
+        a: fb_new(w, h), b: fb_new(w, h), flip: false, w: w, h: h,
+        cam: cam_new(w, h), cam3: cam3_new(w, h), scene: scene_new(), dl: drawlist_new(h),
+        tr: tracers_new(), v3: view3_new(w, h), hud: hud_new(u, h),
+        style: STYLE_NATURAL, flow_view: false, view3d: false, clock: 0.0
+    }
+}
+
+# Fresh cameras and the habitat's usual style, for a new world.
+export function view_reset(v: ptr<View>, l: ptr<Life>) -> void {
+    v.cam = cam_new(v.w, v.h)
+    v.cam.wrap = l.cfg.habitat == HAB_OCEAN
+    v.cam3 = cam3_new(v.w, v.h)
+    v.cam3.wrap = v.cam.wrap
+    if l.cfg.habitat == HAB_SLIDE {
+        # A slide is long: fit its width.
+        v.cam.scale = (v.w as f32) * 0.78 / 250.0
+        v.style = STYLE_BRIGHT
+        v.cam3.dist = 170.0
+    } else {
+        v.style = STYLE_NATURAL
+    }
+    v.tr = tracers_new()
+    v.tr.ev_seen = l.ev_total
+    v.scene.built_open = -1
+}
+
+# Advance what moves on screen but is not the simulation.
+export function view_tick(v: ptr<View>, l: ptr<Life>, ticks: i32) -> void {
+    v.clock = v.clock + (ticks as f32)
+    if l.cfg.flow > 0.0 {
+        tracers_step(&v.tr, l, ticks as f32)
+    } else {
+        tracers_step(&v.tr, l, 0.0)
+    }
+}
+
+# Render a frame; returns it.
+export function view_render(v: ptr<View>, l: ptr<Life>, cs: ptr<Census>, preset: i32, steps: i32,
+                            paused: bool, selected: i32, fps: f32) -> Frame {
+    let mut f: Frame = v.a
+    if v.flip { f = v.b }
+    v.flip = !v.flip
+    scene_terrain(&v.scene, &l.env)
+    scene_vorticity(&v.scene, &l.fluid)
+    let mut sel_seed: u32 = 0 as u32
+    if selected >= 0 { sel_seed = l.cr[selected].seed }
+    let look: Look = Look { style: v.style, t: v.clock, day: l.daylight, selected: sel_seed }
+    if v.view3d {
+        view3_draw(&v.v3, f, &v.cam3, &v.scene, l, v.clock, v.flow_view, v.style)
+    } else {
+        scene_draw(f, &v.scene, &v.cam, l, v.clock, v.flow_view, v.style)
+        let ocean: bool = l.cfg.habitat == HAB_OCEAN
+        if l.cfg.flow > 0.0 and v.style != STYLE_BRIGHT {
+            let mut k: f32 = 0.35 + 0.65 * l.daylight
+            if v.flow_view { k = 1.0 }
+            if !ocean { k = 0.5 }
+            tracers_draw(f, &v.tr, &v.cam, l, k)
+        }
+        drawlist_build(&v.dl, l, &v.cam)
+        if ocean and v.style == STYLE_NATURAL {
+            bodies_glow(f, &v.dl, l, &v.cam, 1.0 - l.daylight)
+        }
+        bodies_draw(f, &v.dl, l, &v.cam, look)
+        effects_draw(f, &v.tr, &v.cam)
+    }
+    hud_draw(f, &v.hud, l, cs, preset, steps, paused, selected, look, v.view3d, v.flow_view, fps)
+    return f
+}
+
+# The organism nearest a screen point, within reach, or -1.
+export function view_pick(v: ptr<View>, l: ptr<Life>, sx: f32, sy: f32) -> i32 {
+    let mut wx: f32 = 0.0
+    let mut wy: f32 = 0.0
+    if v.view3d {
+        # Where the pointer's ray meets the plane organisms swim in.
+        let c: ptr<Cam3> = &v.cam3
+        cam3_update(c)
+        let ox: f32 = (sx - (c.w as f32) * 0.5) / c.focal
+        let oy: f32 = ((c.h as f32) * 0.5 - sy) / c.focal
+        let dx: f32 = c.fx + ox * c.rx + oy * c.ux
+        let dy: f32 = c.fy + ox * c.ry + oy * c.uy
+        let dz: f32 = c.fz + oy * c.uz
+        if dz >= 0.0 { return -1 }
+        let t: f32 = (c.ez - SWIM_Z) / (0.0 - dz)
+        wx = c.ex + dx * t
+        wy = c.ey + dy * t
+        if c.wrap {
+            wx = cam_wrap(wx, WORLD_W as f32)
+            wy = cam_wrap(wy, WORLD_H as f32)
+        }
+    } else {
+        wx = cam_wx(&v.cam, sx)
+        wy = cam_wy(&v.cam, sy)
+    }
+    let mut best: i32 = -1
+    let mut bd: f32 = 1000000.0
+    for i in 0 to l.n {
+        let mut dx: f32 = l.cr[i].px - wx
+        let mut dy: f32 = l.cr[i].py - wy
+        if v.cam.wrap {
+            if dx > 128.0 { dx = dx - 256.0 }
+            if dx < -128.0 { dx = dx + 256.0 }
+            if dy > 128.0 { dy = dy - 256.0 }
+            if dy < -128.0 { dy = dy + 256.0 }
+        }
+        let d: f32 = dx * dx + dy * dy
+        let reach: f32 = l.cr[i].radius + 2.0
+        if d < bd and d < reach * reach {
+            bd = d
+            best = i
+        }
+    }
+    return best
+}
+
+# Keep the camera on an organism.
+export function view_follow(v: ptr<View>, l: ptr<Life>, i: i32) -> void {
+    if i < 0 { return }
+    if v.view3d {
+        let c: ptr<Cam3> = &v.cam3
+        let mut dx: f32 = l.cr[i].px - c.tx
+        let mut dy: f32 = l.cr[i].py - c.ty
+        if c.wrap {
+            if dx > 128.0 { dx = dx - 256.0 }
+            if dx < -128.0 { dx = dx + 256.0 }
+            if dy > 128.0 { dy = dy - 256.0 }
+            if dy < -128.0 { dy = dy + 256.0 }
+        }
+        c.tx = c.tx + 0.12 * dx
+        c.ty = c.ty + 0.12 * dy
+        if c.wrap {
+            c.tx = cam_wrap(c.tx, WORLD_W as f32)
+            c.ty = cam_wrap(c.ty, WORLD_H as f32)
+        }
+    } else {
+        cam_follow(&v.cam, l.cr[i].px, l.cr[i].py, 0.12)
+    }
+}

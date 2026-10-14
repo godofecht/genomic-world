@@ -1,0 +1,591 @@
+# The 3D view: the world seen in perspective from an orbiting camera.
+#
+#   ground     each pixel's ray is marched over the terrain height field
+#              until it meets it (ridges and vessel rims rise; the water
+#              or medium is the floor), then shaded with the same per-point
+#              shader as the 2D view, lit by the slope, and faded into fog
+#              with distance. Done at half resolution and scaled up.
+#   organisms  every body cell is a sphere: projected, then drawn pixel by
+#              pixel against a depth buffer with a lit, rounded surface.
+#              3D bodies stand up in z; unicellular organisms are a chain
+#              of spheres along their length, with flagella and spines as
+#              lines. A soft shadow lies on the floor under each.
+#
+# Spheres are binned by rows and the bands drawn in parallel, as in the 2D
+# view.
+
+import "stdlib/memory.flow"
+import gsim.config
+import glife.lconfig
+import glife.lgenome
+import glife.develop
+import glife.creature
+import glife.lworld
+import .fb
+import .scene
+import .bodies
+
+extern {
+    function sinf(x: f32) -> f32
+    function cosf(x: f32) -> f32
+    function sqrtf(x: f32) -> f32
+    function floorf(x: f32) -> f32
+}
+
+const SPH_CAP: i32 = 400000
+const SBAND: i32 = 32
+# Heights in world units: ocean ridges and vessel rims.
+const RIDGE_Z: f32 = 7.0
+const RIM_Z: f32 = 4.0
+# Organisms float this far above the floor.
+const SWIM_Z: f32 = 1.2
+
+struct Cam3 {
+    tx: f32,
+    ty: f32,
+    yaw: f32,
+    pitch: f32,
+    dist: f32,
+    # derived each frame
+    ex: f32,
+    ey: f32,
+    ez: f32,
+    fx: f32,
+    fy: f32,
+    fz: f32,
+    rx: f32,
+    ry: f32,
+    ux: f32,
+    uy: f32,
+    uz: f32,
+    focal: f32,
+    w: i32,
+    h: i32,
+    wrap: bool
+}
+
+export function cam3_new(w: i32, h: i32) -> Cam3 {
+    let mut c: Cam3 = Cam3 { tx: 128.0, ty: 128.0, yaw: 0.9, pitch: 0.75, dist: 150.0,
+                             ex: 0.0, ey: 0.0, ez: 0.0, fx: 0.0, fy: 0.0, fz: 0.0,
+                             rx: 0.0, ry: 0.0, ux: 0.0, uy: 0.0, uz: 0.0, focal: 1.0, w: w, h: h,
+                             wrap: true }
+    cam3_update(&c)
+    return c
+}
+
+export function cam3_update(c: ptr<Cam3>) -> void {
+    if c.pitch < 0.12 { c.pitch = 0.12 }
+    if c.pitch > 1.5 { c.pitch = 1.5 }
+    if c.dist < 6.0 { c.dist = 6.0 }
+    if c.dist > 420.0 { c.dist = 420.0 }
+    let cp: f32 = cosf(c.pitch)
+    c.ex = c.tx - c.dist * cp * cosf(c.yaw)
+    c.ey = c.ty - c.dist * cp * sinf(c.yaw)
+    c.ez = c.dist * sinf(c.pitch)
+    let fxx: f32 = c.tx - c.ex
+    let fyy: f32 = c.ty - c.ey
+    let fzz: f32 = 0.0 - c.ez
+    let fl: f32 = sqrtf(fxx * fxx + fyy * fyy + fzz * fzz)
+    c.fx = fxx / fl
+    c.fy = fyy / fl
+    c.fz = fzz / fl
+    # right = forward x up(0,0,1)
+    let rxx: f32 = c.fy
+    let ryy: f32 = 0.0 - c.fx
+    let rl: f32 = sqrtf(rxx * rxx + ryy * ryy) + 0.000001
+    c.rx = rxx / rl
+    c.ry = ryy / rl
+    # up = right x forward
+    c.ux = c.ry * c.fz
+    c.uy = 0.0 - c.rx * c.fz
+    c.uz = c.rx * c.fy - c.ry * c.fx
+    c.focal = (c.h as f32) * 0.5 / 0.58
+}
+
+# World point to screen: out = (sx, sy, depth). Depth <= 0 is behind.
+export function cam3_project(c: ptr<Cam3>, x: f32, y: f32, z: f32, out: ptr<f32>) -> void {
+    let dx: f32 = x - c.ex
+    let dy: f32 = y - c.ey
+    let dz: f32 = z - c.ez
+    let zc: f32 = dx * c.fx + dy * c.fy + dz * c.fz
+    let xc: f32 = dx * c.rx + dy * c.ry
+    let yc: f32 = dx * c.ux + dy * c.uy + dz * c.uz
+    out[2] = zc
+    if zc <= 0.05 { return }
+    out[0] = (c.w as f32) * 0.5 + c.focal * xc / zc
+    out[1] = (c.h as f32) * 0.5 - c.focal * yc / zc
+}
+
+struct View3 {
+    lo: Frame,
+    lo_depth: ptr<f32>,
+    depth: ptr<f32>,
+    sx: ptr<f32>,
+    sy: ptr<f32>,
+    sz: ptr<f32>,
+    sr: ptr<f32>,
+    scol: ptr<i32>,
+    n: i32,
+    band_n: ptr<i32>,
+    band_start: ptr<i32>,
+    items: ptr<i32>,
+    bands: i32,
+    lines: ptr<f32>,
+    line_col: ptr<i32>,
+    nl: i32
+}
+
+export function view3_new(w: i32, h: i32) -> View3 {
+    let bands: i32 = (h + SBAND - 1) / SBAND
+    return View3 {
+        lo: fb_new(w / 2, h / 2),
+        lo_depth: alloc_f32(((w / 2) * (h / 2)) as i64),
+        depth: alloc_f32((w * h) as i64),
+        sx: alloc_f32(SPH_CAP as i64), sy: alloc_f32(SPH_CAP as i64),
+        sz: alloc_f32(SPH_CAP as i64), sr: alloc_f32(SPH_CAP as i64),
+        scol: alloc_i32(SPH_CAP as i64), n: 0,
+        band_n: alloc_i32((bands + 1) as i64), band_start: alloc_i32((bands + 1) as i64),
+        items: alloc_i32((SPH_CAP * 3) as i64), bands: bands,
+        lines: alloc_f32((SPH_CAP * 2) as i64), line_col: alloc_i32(SPH_CAP as i64), nl: 0
+    }
+}
+
+function smooth(e0: f32, e1: f32, x: f32) -> f32 {
+    let mut t: f32 = (x - e0) / (e1 - e0)
+    if t < 0.0 { t = 0.0 }
+    if t > 1.0 { t = 1.0 }
+    return t * t * (3.0 - 2.0 * t)
+}
+
+# Terrain height in world units at (x, y): ocean ridges stand RIDGE_Z
+# tall; a vessel's wall is a rim RIM_Z tall with the bench beyond it.
+function height_at(h: ptr<f32>, ocean: bool, x: f32, y: f32) -> f32 {
+    if !ocean {
+        if x < 0.0 or y < 0.0 or x >= (WORLD_W as f32) or y >= (WORLD_H as f32) { return 0.0 }
+    }
+    let v: f32 = samp(h, cam_wrap3(x, WORLD_W as f32), cam_wrap3(y, WORLD_H as f32))
+    if ocean { return RIDGE_Z * smooth(0.3, 0.8, v) }
+    return RIM_Z * smooth(0.28, 0.45, v) * (1.0 - smooth(0.62, 0.85, v))
+}
+
+function cam_wrap3(v: f32, size: f32) -> f32 {
+    return v - size * floorf(v / size)
+}
+
+# The ground at half resolution.
+function ground(v: ptr<View3>, c: ptr<Cam3>, s: ptr<Scene>, sh: ptr<Shade>, ocean: bool, sky: i32, fog_k: f32) -> void {
+    let lo: Frame = v.lo
+    let px: ptr<u32> = lo.px
+    let dep: ptr<f32> = v.lo_depth
+    let w: i32 = lo.w
+    let hh: i32 = lo.h
+    let hgt: ptr<f32> = s.height
+    let mut top: f32 = RIDGE_Z
+    if !ocean { top = RIM_Z }
+    let focal: f32 = c.focal * 0.5
+    parallel for y in 0 to hh {
+        for x in 0 to w {
+            let ox: f32 = ((x as f32) + 0.5 - (w as f32) * 0.5) / focal
+            let oy: f32 = ((hh as f32) * 0.5 - (y as f32) - 0.5) / focal
+            let mut dx: f32 = c.fx + ox * c.rx + oy * c.ux
+            let mut dy: f32 = c.fy + ox * c.ry + oy * c.uy
+            let mut dz: f32 = c.fz + oy * c.uz
+            let dl: f32 = sqrtf(dx * dx + dy * dy + dz * dz)
+            dx = dx / dl
+            dy = dy / dl
+            dz = dz / dl
+            let mut col: i32 = sky
+            let mut depth: f32 = 100000.0
+            if dz < -0.001 {
+                # From where the ray crosses the top of the terrain down to
+                # the floor, march until below the surface.
+                let t0: f32 = (c.ez - top) / (0.0 - dz)
+                let t1: f32 = c.ez / (0.0 - dz)
+                let mut t: f32 = 0.0
+                if t0 > 0.0 { t = t0 }
+                let mut hit: bool = false
+                let mut steps: i32 = 0
+                let step: f32 = 0.6
+                while !hit and t < t1 and steps < 160 {
+                    let x3: f32 = c.ex + dx * t
+                    let y3: f32 = c.ey + dy * t
+                    let z3: f32 = c.ez + dz * t
+                    let hz: f32 = height_at(hgt, ocean, x3, y3)
+                    if z3 <= hz {
+                        hit = true
+                    } else {
+                        let gap: f32 = (z3 - hz) / (0.0 - dz)
+                        let mut adv: f32 = gap * 0.5
+                        if adv < step { adv = step }
+                        t = t + adv
+                        steps = steps + 1
+                    }
+                }
+                if !hit { t = t1 }
+                let x3: f32 = c.ex + dx * t
+                let y3: f32 = c.ey + dy * t
+                let mut wx: f32 = x3
+                let mut wy: f32 = y3
+                if ocean {
+                    wx = cam_wrap3(x3, WORLD_W as f32)
+                    wy = cam_wrap3(y3, WORLD_H as f32)
+                }
+                col = shade_point(sh, wx, wy)
+                # Slope light on the relief.
+                let hz: f32 = height_at(hgt, ocean, x3, y3)
+                if hz > 0.05 {
+                    let gx: f32 = height_at(hgt, ocean, x3 + 0.5, y3) - height_at(hgt, ocean, x3 - 0.5, y3)
+                    let gy: f32 = height_at(hgt, ocean, x3, y3 + 0.5) - height_at(hgt, ocean, x3, y3 - 0.5)
+                    let nl: f32 = 1.0 / sqrtf(gx * gx + gy * gy + 1.0)
+                    let mut lam: f32 = (0.0 - 0.45 * gx - 0.55 * gy + 0.70) * nl
+                    if lam < 0.0 { lam = 0.0 }
+                    col = shade(col, 0.5 + 0.7 * lam)
+                }
+                let mut fog: f32 = t / fog_k
+                fog = fog * fog
+                if fog > 1.0 { fog = 1.0 }
+                col = mix_rgb(col, sky, fog)
+                depth = t
+            }
+            px[y * w + x] = pack_rgb(col)
+            dep[y * w + x] = depth
+        }
+    }
+}
+
+# Scale the half-resolution ground up to the frame, bilinear, and its
+# depth nearest.
+function upscale(v: ptr<View3>, f: Frame) -> void {
+    let lo: Frame = v.lo
+    let lp: ptr<u32> = lo.px
+    let ld: ptr<f32> = v.lo_depth
+    let dp: ptr<f32> = v.depth
+    let px: ptr<u32> = f.px
+    let lw: i32 = lo.w
+    let lh: i32 = lo.h
+    let fw: i32 = f.w
+    parallel for y in 0 to f.h {
+        let fy: f32 = ((y as f32) + 0.5) * 0.5 - 0.5
+        let mut y0: i32 = floorf(fy) as i32
+        let ty: f32 = fy - (y0 as f32)
+        if y0 < 0 { y0 = 0 }
+        let mut y1: i32 = y0 + 1
+        if y1 >= lh { y1 = lh - 1 }
+        if y0 >= lh { y0 = lh - 1 }
+        for x in 0 to fw {
+            let fx: f32 = ((x as f32) + 0.5) * 0.5 - 0.5
+            let mut x0: i32 = floorf(fx) as i32
+            let tx: f32 = fx - (x0 as f32)
+            if x0 < 0 { x0 = 0 }
+            let mut x1: i32 = x0 + 1
+            if x1 >= lw { x1 = lw - 1 }
+            if x0 >= lw { x0 = lw - 1 }
+            let a: u32 = lp[y0 * lw + x0]
+            let b: u32 = lp[y0 * lw + x1]
+            let c: u32 = lp[y1 * lw + x0]
+            let d: u32 = lp[y1 * lw + x1]
+            let mut out: u32 = 0 as u32
+            for ch in 0 to 3 {
+                let sh: u32 = (ch * 8) as u32
+                let va: f32 = ((a >> sh) & (255 as u32)) as f32
+                let vb: f32 = ((b >> sh) & (255 as u32)) as f32
+                let vc: f32 = ((c >> sh) & (255 as u32)) as f32
+                let vd: f32 = ((d >> sh) & (255 as u32)) as f32
+                let top: f32 = va + (vb - va) * tx
+                let bot: f32 = vc + (vd - vc) * tx
+                let val: i32 = (top + (bot - top) * ty + 0.5) as i32
+                out = out | ((val as u32) << sh)
+            }
+            px[y * fw + x] = out
+            dp[y * fw + x] = ld[(y / 2) * lw + (x / 2)]
+        }
+    }
+}
+
+function add_sphere(v: ptr<View3>, c: ptr<Cam3>, x: f32, y: f32, z: f32, r: f32, col: i32, tmp: ptr<f32>) -> void {
+    if v.n >= SPH_CAP { return }
+    cam3_project(c, x, y, z, tmp)
+    if tmp[2] <= 0.5 { return }
+    let rp: f32 = r * c.focal / tmp[2]
+    if tmp[0] + rp < 0.0 or tmp[0] - rp >= (c.w as f32) { return }
+    if tmp[1] + rp < 0.0 or tmp[1] - rp >= (c.h as f32) { return }
+    v.sx[v.n] = tmp[0]
+    v.sy[v.n] = tmp[1]
+    v.sz[v.n] = tmp[2]
+    v.sr[v.n] = rp
+    v.scol[v.n] = col
+    v.n = v.n + 1
+}
+
+function add_line(v: ptr<View3>, c: ptr<Cam3>, x0: f32, y0: f32, z0: f32, x1: f32, y1: f32, z1: f32,
+                  col: i32, tmp: ptr<f32>) -> void {
+    if v.nl * 4 + 4 >= SPH_CAP * 2 { return }
+    cam3_project(c, x0, y0, z0, tmp)
+    if tmp[2] <= 0.5 { return }
+    let ax: f32 = tmp[0]
+    let ay: f32 = tmp[1]
+    cam3_project(c, x1, y1, z1, tmp)
+    if tmp[2] <= 0.5 { return }
+    let k: i32 = v.nl * 4
+    v.lines[k] = ax
+    v.lines[k + 1] = ay
+    v.lines[k + 2] = tmp[0]
+    v.lines[k + 3] = tmp[1]
+    v.line_col[v.nl] = col
+    v.nl = v.nl + 1
+}
+
+# Nearest periodic image of a world coordinate to the camera target.
+function near_image(p: f32, target: f32, size: f32) -> f32 {
+    let mut d: f32 = p - target
+    if d > size * 0.5 { d = d - size }
+    if d < 0.0 - size * 0.5 { d = d + size }
+    return target + d
+}
+
+# Every organism's cells as spheres.
+function gather(v: ptr<View3>, c: ptr<Cam3>, l: ptr<Life>) -> void {
+    v.n = 0
+    v.nl = 0
+    let tmp: array<f32, 3> = [0.0, 0.0, 0.0]
+    let mode: i32 = l.cfg.mode
+    let cells: ptr<u32> = l.cells
+    for i in 0 to l.n {
+        let cr: Creature = l.cr[i]
+        let mut x: f32 = cr.px
+        let mut y: f32 = cr.py
+        if c.wrap {
+            x = near_image(cr.px, c.tx, WORLD_W as f32)
+            y = near_image(cr.py, c.ty, WORLD_H as f32)
+        }
+        let co: f32 = cosf(cr.hd)
+        let si: f32 = sinf(cr.hd)
+        # Skip what is far behind the camera's view.
+        let dx: f32 = x - c.ex
+        let dy: f32 = y - c.ey
+        if dx * c.fx + dy * c.fy > -10.0 {
+            if mode == MODE_MORPH {
+                let m: Morph = morph_decode(l.genome, i * L_WORDS)
+                let r: f32 = 0.5 + 2.0 * m.size
+                let aspect: f32 = 1.0 + 2.5 * m.elong
+                let sa: f32 = sqrtf(aspect)
+                let a: f32 = r * sa
+                let b: f32 = r / sa
+                let col: i32 = pigment(m)
+                let segs: i32 = 1 + ((a / b) * 1.5) as i32
+                for k in 0 to segs {
+                    let t: f32 = ((k as f32) + 0.5) / (segs as f32) * 2.0 - 1.0
+                    let along: f32 = t * (a - b)
+                    let rad: f32 = b * (1.0 - 0.25 * t * t)
+                    add_sphere(v, c, x + co * along, y + si * along, SWIM_Z + b, rad, col, tmp)
+                }
+                if m.eyespot > 0.0 {
+                    add_sphere(v, c, x + co * a * 0.7, y + si * a * 0.7, SWIM_Z + b * 1.6, b * 0.18, 0xe0502a, tmp)
+                }
+                for k in 0 to m.flag_n {
+                    let len: f32 = (0.8 + 2.6 * m.flag_l) * r
+                    let sp: f32 = 0.4 * ((k as f32) - 0.5 * ((m.flag_n - 1) as f32))
+                    add_line(v, c, x - co * a, y - si * a, SWIM_Z + b,
+                             x - cosf(cr.hd + sp) * (a + len), y - sinf(cr.hd + sp) * (a + len), SWIM_Z + b,
+                             shade(col, 0.6), tmp)
+                }
+                for k in 0 to m.spine_n {
+                    let th: f32 = 6.2831853 * ((k as f32) + 0.5) / (m.spine_n as f32)
+                    let len: f32 = (0.4 + 1.4 * m.spine_l) * r
+                    let ux: f32 = cosf(th) * (a + len)
+                    let uy: f32 = sinf(th) * (b + len)
+                    add_line(v, c, x, y, SWIM_Z + b, x + co * ux - si * uy, y + si * ux + co * uy, SWIM_Z + b,
+                             shade(col, 0.7), tmp)
+                }
+            } else {
+                let mut base: i32 = (cr.col & (0xffffff as u32)) as i32
+                let mut mm: Morph = morph_decode(l.genome, i * L_WORDS)
+                if mode == MODE_COMBINED { base = pigment(mm) }
+                for k in 0 to cr.bn {
+                    let cc: u32 = cells[cr.boff + k]
+                    let bx: f32 = cell_x(cc) as f32
+                    let by: f32 = cell_y(cc) as f32
+                    let bz: f32 = cell_z(cc) as f32
+                    let t: i32 = cell_type(cc)
+                    let mut col: i32 = type_rgb(t, cr.col)
+                    let mut rr: f32 = 0.55
+                    if mode == MODE_COMBINED {
+                        rr = rr * (0.8 + 0.035 * (cell_size(cc) as f32))
+                        if t == CELL_CORE { col = base } else { col = mix_rgb(base, col, 0.55) }
+                    }
+                    add_sphere(v, c, x + co * bx - si * by, y + si * bx + co * by, SWIM_Z + 0.6 + bz, rr, col, tmp)
+                    if t == CELL_MOTOR {
+                        add_line(v, c, x + co * (bx - 0.4) - si * by, y + si * (bx - 0.4) + co * by, SWIM_Z + 0.6 + bz,
+                                 x + co * (bx - 2.2) - si * by, y + si * (bx - 2.2) + co * by, SWIM_Z + 0.6 + bz,
+                                 0xb4f0ff, tmp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+function bin(v: ptr<View3>) -> void {
+    for b in 0 to v.bands + 1 {
+        v.band_n[b] = 0
+    }
+    for e in 0 to v.n {
+        let b0: i32 = max_i(0, ((v.sy[e] - v.sr[e]) as i32) / SBAND)
+        let b1: i32 = min_i(v.bands - 1, ((v.sy[e] + v.sr[e]) as i32) / SBAND)
+        for b in b0 to b1 + 1 {
+            v.band_n[b] = v.band_n[b] + 1
+        }
+    }
+    let mut acc: i32 = 0
+    for b in 0 to v.bands {
+        v.band_start[b] = acc
+        acc = acc + v.band_n[b]
+        v.band_n[b] = v.band_start[b]
+    }
+    v.band_start[v.bands] = acc
+    for e in 0 to v.n {
+        let b0: i32 = max_i(0, ((v.sy[e] - v.sr[e]) as i32) / SBAND)
+        let b1: i32 = min_i(v.bands - 1, ((v.sy[e] + v.sr[e]) as i32) / SBAND)
+        for b in b0 to b1 + 1 {
+            if v.band_n[b] < SPH_CAP * 3 {
+                v.items[v.band_n[b]] = e
+                v.band_n[b] = v.band_n[b] + 1
+            }
+        }
+    }
+}
+
+# Spheres, depth-tested, lit from the upper left and the camera.
+function spheres(v: ptr<View3>, f: Frame, sky: i32, fog_k: f32, shadows: bool, focal: f32) -> void {
+    let dp: ptr<f32> = v.depth
+    let px: ptr<u32> = f.px
+    let fw: i32 = f.w
+    parallel for b in 0 to v.bands {
+        let y0: i32 = b * SBAND
+        let y1: i32 = min_i(f.h, y0 + SBAND)
+        let fb: Frame = fb_band(f, y0, y1)
+        if shadows {
+            for q in v.band_start[b] to v.band_start[b + 1] {
+                let e: i32 = v.items[q]
+                fb_disc(fb, v.sx[e] + v.sr[e] * 0.5, v.sy[e] + v.sr[e] * 1.4, v.sr[e] * 1.1, 0x000000, 40)
+            }
+        }
+        for q in v.band_start[b] to v.band_start[b + 1] {
+            let e: i32 = v.items[q]
+            let cx: f32 = v.sx[e]
+            let cy: f32 = v.sy[e]
+            let r: f32 = v.sr[e]
+            let z: f32 = v.sz[e]
+            let col: i32 = v.scol[e]
+            let cr: f32 = ((col >> 16) & 255) as f32
+            let cg: f32 = ((col >> 8) & 255) as f32
+            let cb: f32 = (col & 255) as f32
+            let mut fog: f32 = z / fog_k
+            fog = fog * fog
+            if fog > 1.0 { fog = 1.0 }
+            let sr: f32 = ((sky >> 16) & 255) as f32
+            let sg: f32 = ((sky >> 8) & 255) as f32
+            let sbb: f32 = (sky & 255) as f32
+            let ya: i32 = max_i(y0, floorf(cy - r - 1.0) as i32)
+            let yb: i32 = min_i(y1, (floorf(cy + r + 1.0) as i32) + 1)
+            let xa: i32 = max_i(0, floorf(cx - r - 1.0) as i32)
+            let xb: i32 = min_i(fw, (floorf(cx + r + 1.0) as i32) + 1)
+            let inv: f32 = 1.0 / (r + 0.0001)
+            let mut yy0: i32 = ya
+            if xa >= xb { yy0 = yb }
+            # The sphere's radius in world units, for the depth of its
+            # surface.
+            let rw: f32 = r * z / focal
+            let mut yy: i32 = yy0
+            while yy < yb {
+                let dy: f32 = ((yy as f32) + 0.5 - cy) * inv
+                for xx in xa to xb {
+                    let dx: f32 = ((xx as f32) + 0.5 - cx) * inv
+                    let d2: f32 = dx * dx + dy * dy
+                    if d2 < 1.0 {
+                        let nz: f32 = sqrtf(1.0 - d2)
+                        let o: i32 = yy * fw + xx
+                        let depth: f32 = z - nz * rw
+                        if depth < dp[o] {
+                            dp[o] = depth
+                            let mut lam: f32 = 0.0 - 0.45 * dx - 0.55 * dy + 0.70 * nz
+                            if lam < 0.0 { lam = 0.0 }
+                            let k: f32 = 0.35 + 0.8 * lam
+                            let spec: f32 = lam * lam * lam * lam * lam * lam * 90.0
+                            let edge: f32 = 1.0 - 0.35 * (1.0 - nz)
+                            let mut rr: f32 = (cr * k + spec) * edge
+                            let mut gg: f32 = (cg * k + spec) * edge
+                            let mut bb2: f32 = (cb * k + spec) * edge
+                            rr = rr + (sr - rr) * fog
+                            gg = gg + (sg - gg) * fog
+                            bb2 = bb2 + (sbb - bb2) * fog
+                            let cov: f32 = (1.0 - d2) * r
+                            if cov >= 1.0 {
+                                px[o] = pack(clamp255(rr as i32), clamp255(gg as i32), clamp255(bb2 as i32))
+                            } else {
+                                fb_mix(fb, o, rgb_of(rr as i32, gg as i32, bb2 as i32), (cov * 256.0) as i32)
+                            }
+                        }
+                    }
+                }
+                yy = yy + 1
+            }
+        }
+    }
+    # Lines (flagella, spines) on top, not depth-tested.
+    for k in 0 to v.nl {
+        fb_line(f, v.lines[k * 4], v.lines[k * 4 + 1], v.lines[k * 4 + 2], v.lines[k * 4 + 3],
+                1.2, v.line_col[k], 200)
+    }
+}
+
+# Draw the world in 3D into f.
+export function view3_draw(v: ptr<View3>, f: Frame, c: ptr<Cam3>, s: ptr<Scene>, l: ptr<Life>,
+                           t: f32, flow_view: bool, style: i32) -> void {
+    cam3_update(c)
+    let ctx: Shade = shade_ctx(s, l, t, flow_view, style)
+    let ocean: bool = l.cfg.habitat == HAB_OCEAN
+    let mut sky: i32 = 0x0b1a26
+    if ocean {
+        let d: f32 = l.daylight
+        sky = mix_rgb(0x03070c, 0x2c5670, d)
+    } elif style == 1 {
+        sky = 0xdedad2
+    } elif style == 2 {
+        sky = 0x020203
+    } else {
+        sky = 0x101214
+    }
+    let fog_k: f32 = 260.0 + c.dist * 1.4
+    let mut lo_c: Cam3 = c[0]
+    lo_c.w = v.lo.w
+    lo_c.h = v.lo.h
+    lo_c.focal = c.focal * 0.5
+    ground(v, &lo_c, s, &ctx, ocean, sky, fog_k)
+    upscale(v, f)
+    gather(v, c, l)
+    bin(v)
+    spheres(v, f, sky, fog_k, style == 0, c.focal)
+}
+
+# Orbit, tilt and zoom.
+export function cam3_orbit(c: ptr<Cam3>, dyaw: f32, dpitch: f32) -> void {
+    c.yaw = c.yaw + dyaw
+    c.pitch = c.pitch + dpitch
+}
+
+export function cam3_zoom(c: ptr<Cam3>, factor: f32) -> void {
+    c.dist = c.dist * factor
+}
+
+# Pan the target along the ground in screen directions.
+export function cam3_pan(c: ptr<Cam3>, dsx: f32, dsy: f32) -> void {
+    let k: f32 = c.dist / c.focal
+    let fl: f32 = sqrtf(c.fx * c.fx + c.fy * c.fy) + 0.0001
+    c.tx = c.tx - dsx * k * c.rx + dsy * k * c.fx / fl
+    c.ty = c.ty - dsx * k * c.ry + dsy * k * c.fy / fl
+    if c.wrap {
+        c.tx = cam_wrap3(c.tx, WORLD_W as f32)
+        c.ty = cam_wrap3(c.ty, WORLD_H as f32)
+    }
+}

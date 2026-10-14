@@ -1,0 +1,602 @@
+# Drawing organisms.
+#
+#   plan      every body cell a small lit sphere in its type's colour, with
+#             a darker membrane joining neighbours; eyes have pupils that
+#             look ahead, mouths open, spikes point out, motors beat a
+#             flagellum, photosynthetic cells carry chloroplasts. 3D
+#             bodies draw back to front, higher cells larger and brighter.
+#   combined  the same cells, sized and tinted by the morphological genes
+#             (pigment hue, cell size, membrane, flagellum and spine
+#             length), with each type's organelle as an accent
+#   morph     one cell drawn from its genes: a lobed, elongated outline,
+#             membrane, nucleus, chloroplasts, lipid droplets, an eyespot,
+#             cytostome or raptorial knob, a surface pattern, flagella
+#             that beat, cilia in metachronal waves, and spines
+#
+# Small on screen, each organism falls back to plain discs. Organisms are
+# put in bands of rows and the bands drawn in parallel, each clipped to its
+# own rows, so the picture does not depend on the thread count.
+
+import "stdlib/memory.flow"
+import gsim.config
+import glife.lconfig
+import glife.lgenome
+import glife.develop
+import glife.creature
+import glife.lworld
+import .fb
+import .camera
+
+extern {
+    function sinf(x: f32) -> f32
+    function cosf(x: f32) -> f32
+    function sqrtf(x: f32) -> f32
+    function atan2f(y: f32, x: f32) -> f32
+    function floorf(x: f32) -> f32
+}
+
+const BAND: i32 = 32
+const DRAW_CAP: i32 = 131072
+
+# Rendering styles.
+const STYLE_NATURAL: i32 = 0
+const STYLE_BRIGHT: i32 = 1
+const STYLE_DARK: i32 = 2
+
+struct DrawList {
+    idx: ptr<i32>,
+    sx: ptr<f32>,
+    sy: ptr<f32>,
+    rad: ptr<f32>,
+    n: i32,
+    band_n: ptr<i32>,
+    band_start: ptr<i32>,
+    items: ptr<i32>,
+    bands: i32,
+    order: ptr<i32>,
+    zs: ptr<i32>
+}
+
+export function drawlist_new(h: i32) -> DrawList {
+    let bands: i32 = (h + BAND - 1) / BAND
+    return DrawList {
+        idx: alloc_i32(DRAW_CAP as i64), sx: alloc_f32(DRAW_CAP as i64),
+        sy: alloc_f32(DRAW_CAP as i64), rad: alloc_f32(DRAW_CAP as i64), n: 0,
+        band_n: alloc_i32((bands + 1) as i64), band_start: alloc_i32((bands + 1) as i64),
+        items: alloc_i32((DRAW_CAP * 4) as i64), bands: bands,
+        order: alloc_i32(65536), zs: alloc_i32(65536)
+    }
+}
+
+# HSL to 0xRRGGBB. h in turns, s and l in [0, 1].
+export function hsl(h: f32, s: f32, l: f32) -> i32 {
+    let mut hh: f32 = h - floorf(h)
+    let c: f32 = (1.0 - abs_f(2.0 * l - 1.0)) * s
+    let hp: f32 = hh * 6.0
+    let x: f32 = c * (1.0 - abs_f(hp - 2.0 * floorf(hp * 0.5) - 1.0))
+    let mut r: f32 = 0.0
+    let mut g: f32 = 0.0
+    let mut b: f32 = 0.0
+    if hp < 1.0 {
+        r = c
+        g = x
+    } elif hp < 2.0 {
+        r = x
+        g = c
+    } elif hp < 3.0 {
+        g = c
+        b = x
+    } elif hp < 4.0 {
+        g = x
+        b = c
+    } elif hp < 5.0 {
+        r = x
+        b = c
+    } else {
+        r = c
+        b = x
+    }
+    let m: f32 = l - 0.5 * c
+    return rgb_of(((r + m) * 255.0) as i32, ((g + m) * 255.0) as i32, ((b + m) * 255.0) as i32)
+}
+
+export function shade(rgb: i32, k: f32) -> i32 {
+    return rgb_of(((((rgb >> 16) & 255) as f32) * k) as i32, ((((rgb >> 8) & 255) as f32) * k) as i32,
+                  (((rgb & 255) as f32) * k) as i32)
+}
+
+export function mix_rgb(a: i32, b: i32, t: f32) -> i32 {
+    let ar: f32 = ((a >> 16) & 255) as f32
+    let ag: f32 = ((a >> 8) & 255) as f32
+    let ab: f32 = (a & 255) as f32
+    let br: f32 = ((b >> 16) & 255) as f32
+    let bg: f32 = ((b >> 8) & 255) as f32
+    let bb: f32 = (b & 255) as f32
+    return rgb_of((ar + (br - ar) * t) as i32, (ag + (bg - ag) * t) as i32, (ab + (bb - ab) * t) as i32)
+}
+
+export function type_rgb(t: i32, col: u32) -> i32 {
+    if t == CELL_MOUTH { return 0xf05a46 }
+    if t == CELL_MOTOR { return 0x46c8e6 }
+    if t == CELL_EYE { return 0xfafafa }
+    if t == CELL_ARMOR { return 0x878791 }
+    if t == CELL_STORE { return 0xf0d250 }
+    if t == CELL_SPIKE { return 0xe146e1 }
+    if t == CELL_PHOTO { return 0x46c85a }
+    return (col & (0xffffff as u32)) as i32
+}
+
+# The pigment of a morph-mode or combined-mode organism.
+export function pigment(m: Morph) -> i32 {
+    let s: f32 = 0.25 + 0.7 * m.sat
+    let l: f32 = 0.38 + 0.32 * m.light
+    let base: i32 = hsl(m.hue, s, l)
+    # Chlorophyll greens the cell.
+    return mix_rgb(base, 0x3fae4a, 0.75 * m.chloro)
+}
+
+function hash01(a: u32, b: i32) -> f32 {
+    let mut h: u32 = a ^ ((b as u32) * (0x9e3779b9 as u32))
+    h = h ^ (h >> (16 as u32))
+    h = h * (0x7feb352d as u32)
+    h = h ^ (h >> (15 as u32))
+    h = h * (0x846ca68b as u32)
+    h = h ^ (h >> (16 as u32))
+    return ((h >> (8 as u32)) as f32) / 16777216.0
+}
+
+# Screen extent of an organism in pixels.
+function body_extent(c: ptr<Creature>, i: i32, mode: i32, s: f32) -> f32 {
+    let mut r: f32 = c[i].radius + 1.2
+    if mode == MODE_MORPH { r = c[i].radius * 2.4 + 0.8 }
+    return r * s + 3.0
+}
+
+# Collect what is on screen, with periodic images, and bin by band.
+export function drawlist_build(dl: ptr<DrawList>, l: ptr<Life>, cam: ptr<Camera>) -> void {
+    let s: f32 = cam.scale
+    let fw: f32 = cam.w as f32
+    let fh: f32 = cam.h as f32
+    let ww: f32 = (WORLD_W as f32) * s
+    let wh: f32 = (WORLD_H as f32) * s
+    let mut n: i32 = 0
+    let mut kr: i32 = 1
+    if !cam.wrap { kr = 0 }
+    for i in 0 to l.n {
+        let rad: f32 = body_extent(l.cr, i, l.cfg.mode, s)
+        let bx: f32 = cam_sx(cam, l.cr[i].px)
+        let by: f32 = cam_sy(cam, l.cr[i].py)
+        for ky in 0 - kr to kr + 1 {
+            let sy: f32 = by + (ky as f32) * wh
+            if sy + rad >= 0.0 and sy - rad < fh {
+                for kx in 0 - 2 * kr to 2 * kr + 1 {
+                    let sx: f32 = bx + (kx as f32) * ww
+                    if sx + rad >= 0.0 and sx - rad < fw and n < DRAW_CAP {
+                        dl.idx[n] = i
+                        dl.sx[n] = sx
+                        dl.sy[n] = sy
+                        dl.rad[n] = rad
+                        n = n + 1
+                    }
+                }
+            }
+        }
+    }
+    dl.n = n
+    for b in 0 to dl.bands + 1 {
+        dl.band_n[b] = 0
+    }
+    for e in 0 to n {
+        let b0: i32 = max_i(0, ((dl.sy[e] - dl.rad[e]) as i32) / BAND)
+        let b1: i32 = min_i(dl.bands - 1, ((dl.sy[e] + dl.rad[e]) as i32) / BAND)
+        for b in b0 to b1 + 1 {
+            dl.band_n[b] = dl.band_n[b] + 1
+        }
+    }
+    let mut acc: i32 = 0
+    for b in 0 to dl.bands {
+        dl.band_start[b] = acc
+        acc = acc + dl.band_n[b]
+        dl.band_n[b] = dl.band_start[b]
+    }
+    dl.band_start[dl.bands] = acc
+    if acc > DRAW_CAP * 4 { return }
+    for e in 0 to n {
+        let b0: i32 = max_i(0, ((dl.sy[e] - dl.rad[e]) as i32) / BAND)
+        let b1: i32 = min_i(dl.bands - 1, ((dl.sy[e] + dl.rad[e]) as i32) / BAND)
+        for b in b0 to b1 + 1 {
+            dl.items[dl.band_n[b]] = e
+            dl.band_n[b] = dl.band_n[b] + 1
+        }
+    }
+}
+
+# A wavy flagellum from (x, y) trailing in direction (dx, dy), animated.
+function flagellum(f: Frame, x: f32, y: f32, dx: f32, dy: f32, len: f32, width: f32,
+                   phase: f32, rgb: i32, a: i32) -> void {
+    let px: f32 = 0.0 - dy
+    let py: f32 = dx
+    let mut lx: f32 = x
+    let mut ly: f32 = y
+    for k in 1 to 7 {
+        let t: f32 = (k as f32) / 6.0
+        let amp: f32 = 0.22 * len * t * sinf(phase - t * 5.5)
+        let nx: f32 = x + dx * len * t + px * amp
+        let ny: f32 = y + dy * len * t + py * amp
+        fb_line(f, lx, ly, nx, ny, width * (1.0 - 0.6 * t), rgb, a)
+        lx = nx
+        ly = ny
+    }
+}
+
+struct Look {
+    style: i32,
+    t: f32,
+    day: f32,
+    selected: u32
+}
+
+# One multicellular organism (plan or combined mode).
+function draw_cells(f: Frame, l: ptr<Life>, i: i32, sx: f32, sy: f32, s: f32, look: Look,
+                    zs: ptr<i32>, order: ptr<i32>) -> void {
+    let c: Creature = l.cr[i]
+    let cells: ptr<u32> = l.cells
+    let off: i32 = c.boff
+    let n: i32 = c.bn
+    let co: f32 = cosf(c.hd)
+    let si: f32 = sinf(c.hd)
+    let combined: bool = l.cfg.mode == MODE_COMBINED
+    let mut m: Morph = morph_decode(l.genome, i * L_WORDS)
+    let mut base: i32 = (c.col & (0xffffff as u32)) as i32
+    if combined { base = pigment(m) }
+    let dark: bool = look.style == STYLE_DARK
+    let bright: bool = look.style == STYLE_BRIGHT
+    let alpha: i32 = 255
+    let r_cell: f32 = 0.5 * s
+
+    # Tiny: one disc per cell.
+    if s < 2.6 {
+        for k in 0 to n {
+            let cc: u32 = cells[off + k]
+            let bx: f32 = cell_x(cc) as f32
+            let by: f32 = cell_y(cc) as f32
+            let x: f32 = sx + s * (co * bx - si * by)
+            let y: f32 = sy + s * (si * bx + co * by)
+            let mut col: i32 = type_rgb(cell_type(cc), c.col)
+            if combined and cell_type(cc) == CELL_CORE { col = base }
+            fb_disc(f, x, y, max_f(0.7, r_cell * 1.1), col, alpha)
+        }
+        return
+    }
+    # Back to front by height, for 3D bodies.
+    let mut zmin: i32 = 0
+    let mut zmax: i32 = 0
+    for k in 0 to n {
+        let z: i32 = cell_z(cells[off + k])
+        if z < zmin { zmin = z }
+        if z > zmax { zmax = z }
+    }
+    # Shadow on the water, then the membrane, then the cells.
+    if look.style == STYLE_NATURAL and s >= 5.0 {
+        for k in 0 to n {
+            let cc: u32 = cells[off + k]
+            let bx: f32 = cell_x(cc) as f32
+            let by: f32 = cell_y(cc) as f32
+            let lift: f32 = 0.35 + 0.18 * ((cell_z(cc) - zmin) as f32)
+            let x: f32 = sx + s * (co * bx - si * by) + lift * s
+            let y: f32 = sy + s * (si * bx + co * by) + lift * s * 1.2
+            fb_disc(f, x, y, r_cell * 1.15, 0x000000, 60)
+        }
+    }
+    for z in zmin to zmax + 1 {
+        let zf: f32 = (z as f32)
+        let grow: f32 = 1.0 + 0.07 * zf
+        let lit: f32 = 1.0 + 0.08 * zf
+        let mut outline: i32 = shade(base, 0.35)
+        if bright { outline = shade(base, 0.25) }
+        if dark { outline = shade(base, 0.9) }
+        for k in 0 to n {
+            let cc: u32 = cells[off + k]
+            if cell_z(cc) == z {
+                let bx: f32 = cell_x(cc) as f32
+                let by: f32 = cell_y(cc) as f32
+                let x: f32 = sx + s * (co * bx - si * by) * grow
+                let y: f32 = sy + s * (si * bx + co * by) * grow
+                let mut rr: f32 = r_cell * grow
+                if combined { rr = rr * (0.8 + 0.035 * (cell_size(cc) as f32)) }
+                let mut mem: f32 = 0.14
+                if combined { mem = 0.08 + 0.2 * m.membrane }
+                fb_disc(f, x, y, rr * (1.0 + mem + 0.12), outline, 230)
+            }
+        }
+        for k in 0 to n {
+            let cc: u32 = cells[off + k]
+            if cell_z(cc) == z {
+                let t: i32 = cell_type(cc)
+                let bx: f32 = cell_x(cc) as f32
+                let by: f32 = cell_y(cc) as f32
+                let x: f32 = sx + s * (co * bx - si * by) * grow
+                let y: f32 = sy + s * (si * bx + co * by) * grow
+                let mut rr: f32 = r_cell * grow
+                let mut col: i32 = type_rgb(t, c.col)
+                if combined {
+                    rr = rr * (0.8 + 0.035 * (cell_size(cc) as f32))
+                    let tint: i32 = hsl(m.hue + 0.04 * ((cell_hue(cc) - 7) as f32), 0.25 + 0.7 * m.sat,
+                                        0.38 + 0.32 * m.light)
+                    if t == CELL_CORE { col = tint } else { col = mix_rgb(tint, col, 0.55) }
+                }
+                col = shade(col, lit)
+                if dark {
+                    fb_ring(f, x, y, rr * 0.85, max_f(1.0, rr * 0.25), col, 230)
+                    fb_glow(f, x, y, rr * 1.8, col, 40)
+                } elif bright {
+                    fb_disc(f, x, y, rr, col, 150)
+                } else {
+                    fb_ball(f, x, y, rr, col, 255)
+                }
+                if s >= 5.0 {
+                    cell_detail(f, t, x, y, rr, bx, by, co, si, c, m, combined, look, s)
+                }
+            }
+        }
+    }
+}
+
+function max_f(a: f32, b: f32) -> f32 {
+    if a > b { return a }
+    return b
+}
+
+# Organelle details on one cell.
+function cell_detail(f: Frame, t: i32, x: f32, y: f32, rr: f32, bx: f32, by: f32,
+                     co: f32, si: f32, c: Creature, m: Morph, combined: bool, look: Look, s: f32) -> void {
+    if t == CELL_EYE {
+        fb_disc(f, x + co * rr * 0.35, y + si * rr * 0.35, rr * 0.45, 0x14141e, 255)
+        fb_disc(f, x + co * rr * 0.2 - si * rr * 0.15, y + si * rr * 0.2 + co * rr * 0.15, rr * 0.13, 0xffffff, 220)
+    } elif t == CELL_MOUTH {
+        fb_disc(f, x + co * rr * 0.25, y + si * rr * 0.25, rr * 0.38, 0x3c0a0a, 230)
+    } elif t == CELL_SPIKE {
+        # Point away from the body's middle (sideways when on the axis).
+        let mut ux: f32 = co * bx - si * by
+        let mut uy: f32 = si * bx + co * by
+        let d: f32 = sqrtf(ux * ux + uy * uy)
+        if d < 0.01 {
+            ux = co
+            uy = si
+        } else {
+            ux = ux / d
+            uy = uy / d
+        }
+        let mut len: f32 = 1.1
+        if combined { len = 0.6 + 1.2 * m.spine_l }
+        let tipx: f32 = x + ux * rr * (1.0 + 1.6 * len)
+        let tipy: f32 = y + uy * rr * (1.0 + 1.6 * len)
+        fb_tri(f, x - uy * rr * 0.55, y + ux * rr * 0.55, x + uy * rr * 0.55, y - ux * rr * 0.55,
+               tipx, tipy, 0xf0a0f0, 240)
+    } elif t == CELL_MOTOR {
+        let mut len: f32 = 2.2
+        if combined { len = 1.2 + 2.6 * m.flag_l }
+        let ph: f32 = look.t * (0.35 + 0.6 * c.thrust) + (c.seed & (255 as u32)) as f32
+        flagellum(f, x - co * rr * 0.8, y - si * rr * 0.8, 0.0 - co, 0.0 - si, len * rr, max_f(1.0, rr * 0.22),
+                  ph, 0xb4f0ff, 200)
+    } elif t == CELL_PHOTO {
+        let k: f32 = rr * 0.38
+        fb_disc(f, x - k * 0.6, y - k * 0.3, rr * 0.22, 0x9cf0a0, 200)
+        fb_disc(f, x + k * 0.5, y + k * 0.45, rr * 0.2, 0x9cf0a0, 200)
+        fb_disc(f, x + k * 0.1, y - k * 0.8, rr * 0.16, 0x9cf0a0, 180)
+    } elif t == CELL_STORE {
+        fb_disc(f, x - rr * 0.25, y - rr * 0.25, rr * 0.3, 0xfff6c8, 170)
+    } elif t == CELL_ARMOR {
+        fb_ring(f, x, y, rr * 0.62, max_f(1.0, rr * 0.18), 0xb4b4c0, 200)
+    }
+}
+
+# One unicellular organism (morph mode), drawn from its genes.
+function draw_morph(f: Frame, l: ptr<Life>, i: i32, sx: f32, sy: f32, s: f32, look: Look) -> void {
+    let c: Creature = l.cr[i]
+    let m: Morph = morph_decode(l.genome, i * L_WORDS)
+    let r: f32 = 0.5 + 2.0 * m.size
+    let aspect: f32 = 1.0 + 2.5 * m.elong
+    let sa: f32 = sqrtf(aspect)
+    let a: f32 = r * sa * s
+    let b: f32 = r / sa * s
+    let co: f32 = cosf(c.hd)
+    let si: f32 = sinf(c.hd)
+    let col: i32 = pigment(m)
+    let dark: bool = look.style == STYLE_DARK
+    let bright: bool = look.style == STYLE_BRIGHT
+    if b < 3.0 {
+        # Small: an ellipse stand-in, drawn as two discs along the axis.
+        let off: f32 = (a - b) * 0.5
+        if dark {
+            fb_glow(f, sx, sy, a * 1.6 + 1.0, col, 90)
+        }
+        fb_disc(f, sx + co * off, sy + si * off, max_f(0.8, b), col, 230)
+        fb_disc(f, sx - co * off, sy - si * off, max_f(0.8, b), col, 230)
+        return
+    }
+    let seed: u32 = c.seed
+    let ph: f32 = look.t * (0.3 + 0.7 * c.thrust) + ((seed & (1023 as u32)) as f32) * 0.01
+    let lobes: f32 = 0.22 * m.lobes
+    let ln: f32 = m.lobe_n as f32
+    let mem: f32 = 0.06 + 0.16 * m.membrane
+    # Appendages under the body: spines, flagella.
+    if m.spine_n > 0 and m.spine_l > 0.0 {
+        for k in 0 to m.spine_n {
+            let th: f32 = 6.2831853 * ((k as f32) + 0.5) / (m.spine_n as f32)
+            let ux: f32 = cosf(th)
+            let uy: f32 = sinf(th)
+            let bnd: f32 = 1.0 + lobes * sinf(ln * th + 0.5)
+            let px0: f32 = ux * a * bnd
+            let py0: f32 = uy * b * bnd
+            let len: f32 = (0.4 + 1.4 * m.spine_l) * r * s
+            let nx: f32 = ux * b
+            let ny: f32 = uy * a
+            let nl: f32 = sqrtf(nx * nx + ny * ny) + 0.001
+            let qx: f32 = px0 + nx / nl * len
+            let qy: f32 = py0 + ny / nl * len
+            fb_line(f, sx + co * px0 - si * py0, sy + si * px0 + co * py0,
+                    sx + co * qx - si * qy, sy + si * qx + co * qy, max_f(1.0, 0.06 * r * s),
+                    shade(col, 0.6), 230)
+        }
+    }
+    for k in 0 to m.flag_n {
+        let spread: f32 = 0.5 * (((k as f32) - 0.5 * ((m.flag_n - 1) as f32)))
+        let dx: f32 = 0.0 - cosf(c.hd + spread)
+        let dy: f32 = 0.0 - sinf(c.hd + spread)
+        let len: f32 = (0.8 + 2.6 * m.flag_l) * r * s
+        flagellum(f, sx - co * a * 0.95, sy - si * a * 0.95, dx, dy, len, max_f(1.0, 0.07 * r * s),
+                  ph * 1.7 + (k as f32) * 1.3, shade(col, 0.55), 220)
+    }
+    # The body, pixel by pixel within its box.
+    let ext: f32 = a * (1.0 + lobes) + 2.0
+    let ya: i32 = max_i(f.y0, floorf(sy - ext) as i32)
+    let yb: i32 = min_i(f.y1, (floorf(sy + ext) as i32) + 1)
+    let xa: i32 = max_i(0, floorf(sx - ext) as i32)
+    let xb: i32 = min_i(f.w, (floorf(sx + ext) as i32) + 1)
+    let body_visible: bool = ya < yb and xa < xb
+    let mut edge: i32 = shade(col, 0.38)
+    if dark { edge = shade(col, 1.4) }
+    let nuc: i32 = mix_rgb(shade(col, 0.55), 0x5a3c78, 0.4)
+    let pk: f32 = 6.0 + 10.0 * m.pscale
+    let inv_min: f32 = 1.0 / b
+    let mut yy: i32 = ya
+    if !body_visible { yy = yb }
+    while yy < yb {
+        let dy: f32 = (yy as f32) + 0.5 - sy
+        for xx in xa to xb {
+            let dx: f32 = (xx as f32) + 0.5 - sx
+            let u: f32 = (dx * co + dy * si) / a
+            let v: f32 = (0.0 - dx * si + dy * co) / b
+            let rho: f32 = sqrtf(u * u + v * v)
+            let th: f32 = atan2f(v, u)
+            let bnd: f32 = 1.0 + lobes * sinf(ln * th + 0.5)
+            let d: f32 = (rho - bnd) * b
+            if d < 0.5 {
+                let mut cov: i32 = 256
+                if d > -0.5 { cov = ((0.5 - d) * 256.0) as i32 }
+                let depth: f32 = bnd - rho
+                let mut px: i32 = col
+                let mut al: i32 = 235
+                if bright { al = 140 }
+                if dark { al = 60 }
+                if depth < mem {
+                    px = edge
+                    al = 245
+                } else {
+                    # Lit from the upper left, with a soft centre.
+                    let k: f32 = 0.82 + 0.25 * (1.0 - rho / bnd) - 0.12 * (u * 0.5 + v * 0.5)
+                    px = shade(col, k)
+                    if m.pattern == 1 {
+                        if sinf(u * pk) * sinf(v * pk) > 0.55 { px = shade(px, 0.72) }
+                    } elif m.pattern == 2 {
+                        if sinf(u * pk) > 0.45 { px = shade(px, 0.75) }
+                    } elif m.pattern == 3 {
+                        if sinf(rho * pk * 1.3) > 0.5 { px = shade(px, 0.78) }
+                    }
+                    # Nucleus, behind the middle.
+                    let nu: f32 = (u + 0.25) * 2.6
+                    let nv: f32 = v * 2.6 * b / a * sa
+                    if nu * nu + nv * nv < 1.0 {
+                        px = nuc
+                        if bright { al = 190 }
+                    }
+                }
+                fb_mix(f, yy * f.w + xx, px, (cov * al) >> 8)
+            }
+        }
+        yy = yy + 1
+    }
+    # Organelles on top.
+    let nchl: i32 = (m.chloro * 12.0) as i32
+    for k in 0 to nchl {
+        let rr: f32 = 0.35 + 0.4 * hash01(seed, k * 3)
+        let th: f32 = 6.2831853 * hash01(seed, k * 3 + 1)
+        let ox: f32 = cosf(th) * rr * a
+        let oy: f32 = sinf(th) * rr * b
+        fb_disc(f, sx + co * ox - si * oy, sy + si * ox + co * oy, max_f(0.8, 0.13 * b), 0x2f8a3a, 220)
+    }
+    let nlip: i32 = (m.lipid * 5.0) as i32
+    for k in 0 to nlip {
+        let rr: f32 = 0.3 + 0.4 * hash01(seed, 100 + k * 3)
+        let th: f32 = 6.2831853 * hash01(seed, 101 + k * 3)
+        let ox: f32 = cosf(th) * rr * a
+        let oy: f32 = sinf(th) * rr * b
+        fb_disc(f, sx + co * ox - si * oy, sy + si * ox + co * oy, max_f(0.8, 0.12 * b), 0xf5dc78, 200)
+    }
+    if m.eyespot > 0.0 {
+        let ox: f32 = 0.62 * a
+        let oy: f32 = 0.0 - 0.28 * b
+        fb_disc(f, sx + co * ox - si * oy, sy + si * ox + co * oy, max_f(1.0, (0.08 + 0.12 * m.eyespot) * b),
+                0xe0502a, 255)
+    }
+    if m.raptor > 0.0 {
+        let ox: f32 = (0.95 + 0.25 * m.raptor) * a
+        fb_disc(f, sx + co * ox, sy + si * ox, max_f(1.0, (0.12 + 0.18 * m.raptor) * b), shade(col, 0.5), 255)
+        fb_disc(f, sx + co * (ox + 0.12 * b), sy + si * (ox + 0.12 * b), max_f(0.8, 0.08 * b), 0x3c0a14, 255)
+    } elif m.mouth > 0.0 {
+        let ox: f32 = 0.78 * a
+        fb_disc(f, sx + co * ox, sy + si * ox, max_f(0.8, (0.06 + 0.12 * m.mouth) * b), 0x2a0c0c, 200)
+    }
+    # Cilia: short hairs all round, beating in a wave that runs along the
+    # body (metachronal).
+    let ncil: i32 = (m.cilia * 48.0) as i32
+    for k in 0 to ncil {
+        let th: f32 = 6.2831853 * (k as f32) / (ncil as f32)
+        let bnd: f32 = 1.0 + lobes * sinf(ln * th + 0.5)
+        let ux: f32 = cosf(th) * a * bnd
+        let uy: f32 = sinf(th) * b * bnd
+        let beat: f32 = 0.5 * sinf(ph * 3.0 - th * 4.0)
+        let nx: f32 = cosf(th + beat)
+        let ny: f32 = sinf(th + beat)
+        let len: f32 = 0.22 * r * s
+        let x0: f32 = sx + co * ux - si * uy
+        let y0: f32 = sy + si * ux + co * uy
+        let x1: f32 = x0 + (co * nx - si * ny) * len
+        let y1: f32 = y0 + (si * nx + co * ny) * len
+        fb_line(f, x0, y0, x1, y1, 1.0, edge, 170)
+    }
+}
+
+# Draw every organism on the draw list, bands in parallel.
+export function bodies_draw(f: Frame, dl: ptr<DrawList>, l: ptr<Life>, cam: ptr<Camera>, look: Look) -> void {
+    let bands: i32 = dl.bands
+    let s: f32 = cam.scale
+    let mode: i32 = l.cfg.mode
+    parallel for b in 0 to bands {
+        let fb: Frame = fb_band(f, b * BAND, (b + 1) * BAND)
+        for q in dl.band_start[b] to dl.band_start[b + 1] {
+            let e: i32 = dl.items[q]
+            let i: i32 = dl.idx[e]
+            if mode == MODE_MORPH {
+                draw_morph(fb, l, i, dl.sx[e], dl.sy[e], s, look)
+            } else {
+                draw_cells(fb, l, i, dl.sx[e], dl.sy[e], s, look, dl.zs, dl.order)
+            }
+            if l.cr[i].seed == look.selected {
+                fb_ring(fb, dl.sx[e], dl.sy[e], dl.rad[e] * 0.85, 2.0, 0xffe08a, 230)
+            }
+        }
+    }
+}
+
+# Bioluminescence at night: a soft glow under every organism, in its own
+# colour.
+export function bodies_glow(f: Frame, dl: ptr<DrawList>, l: ptr<Life>, cam: ptr<Camera>, k: f32) -> void {
+    if k <= 0.02 { return }
+    let a: i32 = (k * 70.0) as i32
+    let mode: i32 = l.cfg.mode
+    parallel for b in 0 to dl.bands {
+        let fb: Frame = fb_band(f, b * BAND, (b + 1) * BAND)
+        for q in dl.band_start[b] to dl.band_start[b + 1] {
+            let e: i32 = dl.items[q]
+            let i: i32 = dl.idx[e]
+            let mut col: i32 = (l.cr[i].col & (0xffffff as u32)) as i32
+            if mode != MODE_PLAN {
+                col = pigment(morph_decode(l.genome, i * L_WORDS))
+            }
+            if l.cr[i].attack > 0.0 { col = 0xff50c8 }
+            fb_glow(fb, dl.sx[e], dl.sy[e], dl.rad[e] * 1.1, col, a)
+        }
+    }
+}

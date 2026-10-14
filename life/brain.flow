@@ -1,36 +1,69 @@
-# The nervous system: one layer from seven inputs to two outputs.
+# The nervous system: ten inputs, four hidden neurons with memory, two
+# outputs.
 #
 #   inputs   0 food to the front-left    1 food ahead    2 food front-right
 #            3 prey direction (+ left, - right, weighted by nearness)
 #            4 threat direction (same convention)
 #            5 own energy as a fraction of capacity
-#            6 constant 1 (bias)
+#            6 light gradient: brighter ahead (+) or behind (-)
+#            7 nearest possible mate (same convention as prey)
+#            8 lateral line: the current across the body, + pushing left
+#            9 constant 1 (bias)
+#   hidden   h_j(t) = tanh(sum_i w_ji x_i + r_j h_j(t-1)). The self weight
+#            r_j lets a neuron hold a value over time: a memory of food
+#            just passed, or of a threat no longer in view.
 #   outputs  0 turn: clamp(sum, -1, 1), positive turns left
 #            1 thrust: logistic(sum), 0 to 1 of top speed
+#            Each output reads every input and every hidden neuron.
 #
-# Weight k = output * 7 + input. Weights come from the genome (lgenome.flow)
-# and are decoded once at birth into the brain array.
+# Weights come from the genome (lgenome.flow) and are decoded once at birth
+# into the brain array; the layout is in lconfig.flow.
 
 import .lconfig
 
 extern {
     function expf(x: f32) -> f32
+    function tanhf(x: f32) -> f32
 }
 
-export function brain_turn(w: ptr<f32>, wb: i32, x: ptr<f32>) -> f32 {
-    let mut s: f32 = 0.0
-    for k in 0 to BRAIN_IN {
-        s = s + w[wb + k] * x[k]
+export function brain_w_out(o: i32, i: i32) -> i32 {
+    return BW_OUT + o * BW_ROW + i
+}
+
+export function brain_w_in(j: i32, i: i32) -> i32 {
+    return BW_IH + j * BRAIN_IN + i
+}
+
+# Advance the hidden state h[0..4] in place from inputs x.
+export function brain_hidden(w: ptr<f32>, wb: i32, x: ptr<f32>, h: ptr<f32>) -> void {
+    for j in 0 to BRAIN_HID {
+        let mut s: f32 = w[wb + BW_HH + j] * h[j]
+        for i in 0 to BRAIN_IN {
+            s = s + w[wb + BW_IH + j * BRAIN_IN + i] * x[i]
+        }
+        h[j] = tanhf(s)
     }
+}
+
+function brain_sum(w: ptr<f32>, wb: i32, o: i32, x: ptr<f32>, h: ptr<f32>) -> f32 {
+    let base: i32 = wb + BW_OUT + o * BW_ROW
+    let mut s: f32 = 0.0
+    for i in 0 to BRAIN_IN {
+        s = s + w[base + i] * x[i]
+    }
+    for j in 0 to BRAIN_HID {
+        s = s + w[base + BRAIN_IN + j] * h[j]
+    }
+    return s
+}
+
+export function brain_turn(w: ptr<f32>, wb: i32, x: ptr<f32>, h: ptr<f32>) -> f32 {
+    let s: f32 = brain_sum(w, wb, 0, x, h)
     if s > 1.0 { return 1.0 }
     if s < -1.0 { return -1.0 }
     return s
 }
 
-export function brain_thrust(w: ptr<f32>, wb: i32, x: ptr<f32>) -> f32 {
-    let mut s: f32 = 0.0
-    for k in 0 to BRAIN_IN {
-        s = s + w[wb + BRAIN_IN + k] * x[k]
-    }
-    return 1.0 / (1.0 + expf(0.0 - s))
+export function brain_thrust(w: ptr<f32>, wb: i32, x: ptr<f32>, h: ptr<f32>) -> f32 {
+    return 1.0 / (1.0 + expf(0.0 - brain_sum(w, wb, 1, x, h)))
 }

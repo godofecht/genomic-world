@@ -1,13 +1,20 @@
 # The life world's genetics, development and bookkeeping.
 #
 #   1  the founding genotype develops into mouth, core, motor along the axis
-#   2  development is bilaterally symmetric for random genotypes
-#   3  swapping the two homologs leaves the body unchanged (dominance series
-#      is symmetric)
-#   4  gametes carry only parental alleles when mutation is off
-#   5  brain weights decode to what was written
-#   6  a short run keeps every organism alive in the record table with
-#      positive energy and a body that has at least one cell
+#   2  development is bilaterally symmetric for random programs, in 2D and
+#      in 3D, and 2D bodies stay flat
+#   3  swapping the two homologs leaves the body unchanged (the dominance
+#      series is symmetric)
+#   4  without point mutation, a gamete's fixed loci carry only parental
+#      alleles, and every gene in its program is a gene of the parent
+#   5  brain weights decode to what was written, and a weight written as
+#      zero decodes to exactly zero (the founders' hidden layer is silent)
+#   6  unequal crossing-over, duplication and deletion change program
+#      length both ways
+#   7  in morph mode a bigger cell is heavier, more flagella swim faster,
+#      a raptorial cell attacks and a spiny one defends
+#   8  short runs in plan (2D), morph and combined (3D) modes keep every
+#      organism alive in the table with a body, and the cell arena packed
 
 import "stdlib/memory.flow"
 import gsim.config
@@ -16,72 +23,129 @@ import gsim.genome
 import glife.lconfig
 import glife.lgenome
 import glife.develop
+import glife.brain
 import glife.creature
 import glife.lworld
+import glife.habitat
 
 extern {
     function fabs(x: f64) -> f64
+}
+
+function body_ok(cells: ptr<u32>, off: i32, n: i32, dims: i32) -> bool {
+    for k in 0 to n {
+        let c: u32 = cells[off + k]
+        if dims == 2 and cell_z(c) != 0 { return false }
+        let mut found: bool = false
+        for q in 0 to n {
+            let d: u32 = cells[off + q]
+            if cell_x(d) == cell_x(c) and cell_y(d) == 0 - cell_y(c) and cell_z(d) == cell_z(c)
+               and cell_type(d) == cell_type(c) {
+                found = true
+            }
+        }
+        if !found { return false }
+    }
+    return true
+}
+
+# A random program of k genes on homolog h.
+function random_prog(g: ptr<u32>, gb: i32, h: i32, k: i32, st: ptr<u32>) -> void {
+    let p: i32 = prog_at(gb, h)
+    g[p] = k as u32
+    for i in 0 to k {
+        g[p + 1 + 2 * i] = rng_word(st)
+        g[p + 2 + 2 * i] = rng_word(st)
+    }
 }
 
 function main() -> i32 {
     let mut st: u32 = rng_stream(5 as u32, 1 as u32, 1 as u32)
     let n: i32 = 4
     let g: ptr<u32> = alloc_zeroed((n * L_WORDS * 4) as i64) as ptr<u32>
-    let dev: ptr<u32> = alloc_zeroed((n * 16) as i64) as ptr<u32>
-    let body: ptr<u8> = alloc_zeroed((n * BODY_CELLS) as i64) as ptr<u8>
     let brain: ptr<f32> = alloc_f32((n * BRAIN_W) as i64)
     let cr: ptr<Creature> = alloc_bytes((n as i64) * CR_BYTES) as ptr<Creature>
+    let cells: ptr<u32> = alloc_zeroed(4 * 200000) as ptr<u32>
+    let mut x: Expr = expr_new()
 
     luca(g, 0, &st)
-    express(cr, g, dev, body, brain, 0)
-    let cells: i32 = cr[0].cells
-    let mid: i32 = 3 * BODY
-    if cells != 3 or (body[mid + 4] as i32) != CELL_MOUTH or (body[mid + 3] as i32) != CELL_CORE
-       or (body[mid + 2] as i32) != CELL_MOTOR {
-        printf("FAIL 1 founding body has %d cells\n", cells)
+    let nb: i32 = express(cr, g, brain, 0, MODE_PLAN, 2, &x, cells, 0)
+    let mut mouth_ok: bool = false
+    let mut core_ok: bool = false
+    let mut motor_ok: bool = false
+    for k in 0 to nb {
+        let c: u32 = cells[k]
+        if cell_x(c) == 1 and cell_y(c) == 0 and cell_type(c) == CELL_MOUTH { mouth_ok = true }
+        if cell_x(c) == 0 and cell_y(c) == 0 and cell_type(c) == CELL_CORE { core_ok = true }
+        if cell_x(c) == -1 and cell_y(c) == 0 and cell_type(c) == CELL_MOTOR { motor_ok = true }
+    }
+    if nb != 3 or !mouth_ok or !core_ok or !motor_ok {
+        printf("FAIL 1 founding body has %d cells\n", nb)
         return 1
     }
-    if fabs((brain[0] as f64) - 2.5) > 0.07 or fabs((brain[BRAIN_IN + 6] as f64) - 1.0) > 0.07 {
-        printf("FAIL 5 brain weights %f %f\n", brain[0] as f64, brain[BRAIN_IN + 6] as f64)
+    let w0: f32 = brain[brain_w_out(0, 0)]
+    let w1: f32 = brain[brain_w_out(1, 9)]
+    if fabs((w0 as f64) - 2.5) > 0.07 or fabs((w1 as f64) - 1.0) > 0.07 {
+        printf("FAIL 5 brain weights %f %f\n", w0 as f64, w1 as f64)
         return 5
+    }
+    for j in 0 to BRAIN_HID {
+        if brain[BW_HH + j] != 0.0 or brain[brain_w_in(j, 9)] != 0.0 {
+            printf("FAIL 5 founder hidden weight not zero\n")
+            return 5
+        }
     }
 
     let mut big: i32 = 0
-    for trial in 0 to 2000 {
-        for w in 0 to L_WORDS {
+    let mut biggest: i32 = 0
+    for trial in 0 to 1000 {
+        let dims: i32 = 2 + (trial & 1)
+        for w in 0 to L_FIXED {
             g[L_WORDS + w] = rng_word(&st)
         }
-        express(cr, g, dev, body, brain, 1)
-        if cr[1].cells > 10 { big = big + 1 }
-        for y in 0 to BODY {
-            for x in 0 to BODY {
-                if body[BODY_CELLS + y * BODY + x] != body[BODY_CELLS + (6 - y) * BODY + x] {
-                    printf("FAIL 2 asymmetric body\n")
-                    return 2
-                }
-            }
+        let k: i32 = 1 + rng_below(&st, 12)
+        random_prog(g, L_WORDS, 0, k, &st)
+        random_prog(g, L_WORDS, 1, 1 + rng_below(&st, 12), &st)
+        let nb1: i32 = express(cr, g, brain, 1, MODE_PLAN, dims, &x, cells, 0)
+        if nb1 > 10 { big = big + 1 }
+        if nb1 > biggest { biggest = nb1 }
+        if !body_ok(cells, 0, nb1, dims) {
+            printf("FAIL 2 asymmetric or misplaced body, %dD\n", dims)
+            return 2
         }
         let h1: u32 = cr[1].plan
+        # Swap homologs: fixed parts and programs.
         for w in 0 to L_CHROMS {
             g[2 * L_WORDS + w] = g[L_WORDS + w + L_CHROMS]
             g[2 * L_WORDS + w + L_CHROMS] = g[L_WORDS + w]
         }
-        express(cr, g, dev, body, brain, 2)
-        if cr[2].plan != h1 {
+        for w in 0 to DEVH {
+            g[prog_at(2 * L_WORDS, 0) + w] = g[prog_at(L_WORDS, 1) + w]
+            g[prog_at(2 * L_WORDS, 1) + w] = g[prog_at(L_WORDS, 0) + w]
+        }
+        let nb2: i32 = express(cr, g, brain, 2, MODE_PLAN, dims, &x, cells, 0)
+        if cr[2].plan != h1 or nb2 != nb1 {
             printf("FAIL 3 homolog swap changed the body\n")
             return 3
         }
     }
-    printf("  2000 random genotypes: all symmetric, homolog-swap invariant, %d with more than 10 cells\n", big)
+    printf("  1000 random programs, 2D and 3D: all symmetric, homolog-swap invariant; %d over 10 cells, largest %d\n",
+           big, biggest)
 
     let mut a: Arch = arch_new(1 as u32)
     arch_set_map(&a, 1.0)
-    for trial in 0 to 2000 {
-        for w in 0 to L_WORDS {
+    let mut shorter: i32 = 0
+    let mut longer: i32 = 0
+    for trial in 0 to 3000 {
+        for w in 0 to L_FIXED {
             g[w] = rng_word(&st)
             g[L_WORDS + w] = rng_word(&st)
         }
-        l_cross(g, 0, 1, 2, &st, &a, 0.0, 1.0)
+        random_prog(g, 0, 0, 6, &st)
+        random_prog(g, 0, 1, 6, &st)
+        random_prog(g, L_WORDS, 0, 6, &st)
+        random_prog(g, L_WORDS, 1, 6, &st)
+        l_cross(g, 0, 1, 2, &st, &a, 0.0, 1.0, 0.0)
         for c in 0 to L_CHROMS {
             let m: u32 = g[2 * L_WORDS + c]
             let p: u32 = g[2 * L_WORDS + c + L_CHROMS]
@@ -94,22 +158,97 @@ function main() -> i32 {
                 return 4
             }
         }
-    }
-
-    let mut l: Life = life_init(424242 as u32)
-    for t in 0 to 300 {
-        life_step(&l)
-        for i in 0 to l.n {
-            if l.cr[i].en <= 0.0 or l.cr[i].cells < 1 {
-                printf("FAIL 6 dead or bodiless organism in slot %d\n", i)
-                return 6
+        for h in 0 to 2 {
+            let pc: i32 = prog_at(2 * L_WORDS, h)
+            let kc: i32 = g[pc] as i32
+            if kc < 6 { shorter = shorter + 1 }
+            if kc > 6 { longer = longer + 1 }
+            let parent: i32 = h * L_WORDS
+            for i in 0 to kc {
+                let mut found: bool = false
+                for hp in 0 to 2 {
+                    let pp: i32 = prog_at(parent, hp)
+                    for q in 0 to 6 {
+                        if g[pp + 1 + 2 * q] == g[pc + 1 + 2 * i] and g[pp + 2 + 2 * q] == g[pc + 2 + 2 * i] {
+                            found = true
+                        }
+                    }
+                }
+                if !found {
+                    printf("FAIL 4 gamete program gene not in parent\n")
+                    return 4
+                }
             }
         }
     }
-    printf("  300 ticks: %d organisms\n", l.n)
-    if l.n == 0 {
-        printf("FAIL 6 extinct\n")
+    printf("  6000 gametes: alleles and genes all parental; %d programs shortened, %d lengthened\n",
+           shorter, longer)
+    if shorter == 0 or longer == 0 {
+        printf("FAIL 6 program length never changed both ways\n")
         return 6
+    }
+
+    # 7. Morph mode: traits act on function.
+    luca(g, 0, &st)
+    let e0: i32 = express(cr, g, brain, 0, MODE_MORPH, 2, &x, cells, 0)
+    let m0: f32 = cr[0].mass
+    let v0: f32 = cr[0].vmax
+    l_set_dosage(g, 0, M_SIZE, 8, 12)
+    let e1: i32 = express(cr, g, brain, 0, MODE_MORPH, 2, &x, cells, 0)
+    if cr[0].mass <= m0 {
+        printf("FAIL 7 bigger cell not heavier\n")
+        return 7
+    }
+    l_set_dosage(g, 0, M_SIZE, 8, 4)
+    l_set_int(g, 0, M_FLAGN, 3, 4)
+    let e2: i32 = express(cr, g, brain, 0, MODE_MORPH, 2, &x, cells, 0)
+    if cr[0].vmax <= v0 {
+        printf("FAIL 7 more flagella not faster\n")
+        return 7
+    }
+    let d0: f32 = cr[0].defense
+    let a0: f32 = cr[0].attack
+    l_set_dosage(g, 0, M_RAPTOR, 4, 8)
+    l_set_int(g, 0, M_SPINEN, 4, 9)
+    l_set_dosage(g, 0, M_SPINEL, 6, 12)
+    let e3: i32 = express(cr, g, brain, 0, MODE_MORPH, 2, &x, cells, 0)
+    if cr[0].attack <= a0 or cr[0].defense <= d0 {
+        printf("FAIL 7 raptorial or spines do nothing\n")
+        return 7
+    }
+    printf("  morph traits: size, flagella, raptorial organelles and spines act as they should\n")
+
+    # 8. Short runs in each mode.
+    let modes: array<i32, 3> = [MODE_PLAN, MODE_MORPH, MODE_COMBINED]
+    let dimss: array<i32, 3> = [2, 2, 3]
+    let presets: array<i32, 3> = [P_OCEAN, P_DISH, P_GAUSE]
+    for r in 0 to 3 {
+        let mut l: Life = life_create(424242 as u32, presets[r], modes[r], dimss[r])
+        for t in 0 to 200 {
+            life_step(&l)
+            let mut used: i32 = 0
+            for i in 0 to l.n {
+                if l.cr[i].en <= 0.0 or l.cr[i].bn < 1 {
+                    printf("FAIL 8 dead or bodiless organism in slot %d, mode %d\n", i, modes[r])
+                    return 8
+                }
+                if l.cr[i].boff != used {
+                    printf("FAIL 8 arena not packed at slot %d, mode %d\n", i, modes[r])
+                    return 8
+                }
+                used = used + l.cr[i].bn
+            }
+            if used != l.cell_used {
+                printf("FAIL 8 arena count %d against %d\n", l.cell_used, used)
+                return 8
+            }
+        }
+        printf("  %s, mode %d, %dD bodies: 200 ticks, %d organisms, %d body cells\n",
+               preset_name(presets[r]), modes[r], dimss[r], l.n, l.cell_used)
+        if l.n == 0 {
+            printf("FAIL 8 extinct\n")
+            return 8
+        }
     }
     printf("OK life\n")
     return 0

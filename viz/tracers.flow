@@ -1,0 +1,221 @@
+# Marine snow: particles carried by the water, to make the currents
+# visible, and short-lived effects for births, kills and deaths.
+#
+# Neither touches the simulation. Tracers move with the fluid velocity times
+# the ticks run per frame and are reborn at random after a while or when
+# they hit a wall. Effects come from the world's event ring: each event
+# since the last frame starts a ring or a burst that fades.
+
+import "stdlib/memory.flow"
+import gsim.config
+import gsim.state
+import gsim.rng
+import gsim.world
+import glife.lconfig
+import glife.fluid
+import glife.lworld
+import .fb
+import .camera
+
+extern {
+    function sqrtf(x: f32) -> f32
+}
+
+const TRACERS: i32 = 30000
+const FX_MAX: i32 = 4096
+const FX_LIFE: f32 = 40.0
+
+struct Tracers {
+    x: ptr<f32>,
+    y: ptr<f32>,
+    age: ptr<f32>,
+    life: ptr<f32>,
+    rng: u32,
+    fx_x: ptr<f32>,
+    fx_y: ptr<f32>,
+    fx_age: ptr<f32>,
+    fx_k: ptr<i32>,
+    fx_next: i32,
+    ev_seen: i32
+}
+
+export function tracers_new() -> Tracers {
+    let n: i64 = TRACERS as i64
+    let mut t: Tracers = Tracers {
+        x: alloc_f32(n), y: alloc_f32(n), age: alloc_f32(n), life: alloc_f32(n),
+        rng: 12345 as u32,
+        fx_x: alloc_f32(FX_MAX as i64), fx_y: alloc_f32(FX_MAX as i64),
+        fx_age: alloc_f32(FX_MAX as i64), fx_k: alloc_i32(FX_MAX as i64),
+        fx_next: 0, ev_seen: 0
+    }
+    for k in 0 to FX_MAX {
+        t.fx_age[k] = 1000.0
+    }
+    return t
+}
+
+function respawn(t: ptr<Tracers>, k: i32, l: ptr<Life>) -> void {
+    let mut tries: i32 = 0
+    while tries < 8 {
+        let x: f32 = rng_unit(&t.rng) * (WORLD_W as f32)
+        let y: f32 = rng_unit(&t.rng) * (WORLD_H as f32)
+        tries = tries + 1
+        if passable(l.env.terrain, cell_index(x, y), l.env.passes_open) {
+            t.x[k] = x
+            t.y[k] = y
+            tries = 99
+        }
+    }
+    t.age[k] = 0.0
+    t.life[k] = 200.0 + 400.0 * rng_unit(&t.rng)
+}
+
+# Advance tracers by `ticks` ticks of flow, and start effects for new
+# events.
+export function tracers_step(t: ptr<Tracers>, l: ptr<Life>, ticks: f32) -> void {
+    let fl: ptr<Fluid> = &l.fluid
+    for k in 0 to TRACERS {
+        if t.age[k] >= t.life[k] or t.life[k] == 0.0 {
+            respawn(t, k, l)
+        } else {
+            let u: f32 = fluid_u_at(fl, t.x[k], t.y[k])
+            let v: f32 = fluid_v_at(fl, t.x[k], t.y[k])
+            let nx: f32 = wrap_x(t.x[k] + u * ticks)
+            let ny: f32 = wrap_y(t.y[k] + v * ticks)
+            if passable(l.env.terrain, cell_index(nx, ny), l.env.passes_open) {
+                t.x[k] = nx
+                t.y[k] = ny
+            } else {
+                t.age[k] = t.life[k]
+            }
+            t.age[k] = t.age[k] + ticks
+        }
+    }
+    # Effects from events since last time; when far behind, skip ahead.
+    # At most the 600 latest events: the rest are long over.
+    let mut from: i32 = t.ev_seen
+    if l.ev_total - from > 600 { from = l.ev_total - 600 }
+    let mut births: i32 = 0
+    for e in from to l.ev_total {
+        let q: i32 = e & (L_EVENTS - 1)
+        let kind: i32 = l.ev_k[q]
+        # Births are many: show one in four.
+        let mut show: bool = true
+        if kind == EV_BIRTH {
+            births = births + 1
+            show = (births & 3) == 0
+        }
+        if show {
+            let s: i32 = t.fx_next
+            t.fx_x[s] = l.ev_x[q]
+            t.fx_y[s] = l.ev_y[q]
+            t.fx_age[s] = 0.0
+            t.fx_k[s] = kind
+            t.fx_next = (s + 1) % FX_MAX
+        }
+    }
+    t.ev_seen = l.ev_total
+    for s in 0 to FX_MAX {
+        t.fx_age[s] = t.fx_age[s] + 1.0
+    }
+}
+
+# Tracers as faint additive specks, with a short tail along the flow.
+export function tracers_draw(f: Frame, t: ptr<Tracers>, cam: ptr<Camera>, l: ptr<Life>, bright: f32) -> void {
+    let fl: ptr<Fluid> = &l.fluid
+    let s: f32 = cam.scale
+    let fw: f32 = f.w as f32
+    let fh: f32 = f.h as f32
+    let ww: f32 = (WORLD_W as f32) * s
+    let wh: f32 = (WORLD_H as f32) * s
+    let a: i32 = (bright * 110.0) as i32
+    if a <= 2 { return }
+    let tail: f32 = 6.0 * s
+    let px: ptr<u32> = f.px
+    let fwi: i32 = f.w
+    # Single-pixel adds: draw by bands so threads never share a row.
+    let bands: i32 = (f.h + 63) / 64
+    parallel for bnd in 0 to bands {
+        let y0: i32 = bnd * 64
+        let y1: i32 = min_i(f.h, y0 + 64)
+        let fb: Frame = fb_band(f, y0, y1)
+        for k in 0 to TRACERS {
+            let fade: f32 = t.age[k] / (t.life[k] + 0.001)
+            let mut w: f32 = 1.0
+            if fade < 0.15 { w = fade / 0.15 }
+            if fade > 0.8 { w = (1.0 - fade) / 0.2 }
+            if w > 0.0 {
+                let bx: f32 = cam_sx(cam, t.x[k])
+                let by: f32 = cam_sy(cam, t.y[k])
+                let mut kr: i32 = 1
+                if !cam.wrap { kr = 0 }
+                for ky in 0 - kr to kr + 1 {
+                    let sy: f32 = by + (ky as f32) * wh
+                    if sy >= (y0 as f32) - tail and sy < (y1 as f32) + tail {
+                        for kx in 0 - 2 * kr to 2 * kr + 1 {
+                            let sx: f32 = bx + (kx as f32) * ww
+                            if sx >= 0.0 - tail and sx < fw + tail {
+                                let u: f32 = fluid_u_at(fl, t.x[k], t.y[k])
+                                let v: f32 = fluid_v_at(fl, t.x[k], t.y[k])
+                                let sp: f32 = sqrtf(u * u + v * v) + 0.0001
+                                let len: f32 = min_f2(tail, sp * 18.0 * s)
+                                let alpha: i32 = ((w * (a as f32)) as i32)
+                                if len > 1.5 {
+                                    fb_line(fb, sx, sy, sx - u / sp * len, sy - v / sp * len, 1.1, 0xbfe6ff, alpha / 2)
+                                }
+                                fb_disc(fb, sx, sy, max_f2(0.7, 0.09 * s), 0xe6f6ff, alpha)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+function min_f2(a: f32, b: f32) -> f32 {
+    if a < b { return a }
+    return b
+}
+
+function max_f2(a: f32, b: f32) -> f32 {
+    if a > b { return a }
+    return b
+}
+
+# Effects: a birth is a soft white ring; a kill a red burst; a death a
+# brown puff.
+export function effects_draw(f: Frame, t: ptr<Tracers>, cam: ptr<Camera>) -> void {
+    let s: f32 = cam.scale
+    let bands: i32 = (f.h + 63) / 64
+    parallel for bnd in 0 to bands {
+        let fb: Frame = fb_band(f, bnd * 64, bnd * 64 + 64)
+        for k in 0 to FX_MAX {
+            let age: f32 = t.fx_age[k]
+            if age < FX_LIFE {
+                let u: f32 = age / FX_LIFE
+                let sx: f32 = cam_sx(cam, t.fx_x[k])
+                let sy: f32 = cam_sy(cam, t.fx_y[k])
+                let kind: i32 = t.fx_k[k]
+                let fade: i32 = ((1.0 - u) * 200.0) as i32
+                if kind == EV_KILL {
+                    let rad: f32 = (0.5 + 1.6 * u) * s + 2.0
+                    if sy + rad >= (fb.y0 as f32) and sy - rad < (fb.y1 as f32) {
+                        fb_glow(fb, sx, sy, rad * 1.2, 0xff3c3c, fade / 3)
+                        fb_ring(fb, sx, sy, rad, 1.0 + 0.05 * s, 0xff6a50, fade / 2)
+                    }
+                } elif kind == EV_BIRTH {
+                    let rad: f32 = (0.4 + 1.4 * u) * s + 2.0
+                    if sy + rad >= (fb.y0 as f32) and sy - rad < (fb.y1 as f32) {
+                        fb_ring(fb, sx, sy, rad, 1.0 + 0.04 * s, 0xf0fff0, fade / 2)
+                    }
+                } else {
+                    let rad: f32 = (0.5 + 1.0 * u) * s + 2.0
+                    if sy + rad >= (fb.y0 as f32) and sy - rad < (fb.y1 as f32) {
+                        fb_disc(fb, sx, sy + u * s, rad, 0x5a4026, fade / 3)
+                    }
+                }
+            }
+        }
+    }
+}

@@ -8,9 +8,12 @@
 #                       determinism check
 #   ./run.sh validate   genetic engine against population-genetic theory
 #   ./run.sh export     run 3000 ticks, write a VCF sample to out/
-#   ./run.sh life       the life world: organisms with developed bodies
+#   ./run.sh life       the life world, full screen (Tab picks the world)
 #   ./run.sh life-bench headless life world: population, body plans
-#   ./run.sh life-record N  headless life world GIF to out/life.gif
+#                       (GW_PRESET, GW_MODE, GW_DIMS, GW_TICKS, GW_PROFILE)
+#   ./run.sh life-video N  N frames rendered headless, to out/life.mp4
+#   ./run.sh shot       headless life world renders to out/ (see
+#                       life_shot.flow for the GW_ settings)
 #   ./run.sh equilibrium  calibrate, solve the attractors, compare cold and
 #                       warm starts
 #
@@ -84,13 +87,23 @@ case "${1:-gfx}" in
     life)
         flow gfx life_world.flow
         ;;
+    shot)
+        mkdir -p out
+        FLOW_LDFLAGS="-framework CoreText -framework CoreGraphics -framework CoreFoundation" \
+            flow run life_shot.flow 2>&1 | quiet
+        ;;
     life-bench)
         flow run life_bench.flow 2>&1 | quiet
         ;;
-    life-record)
-        mkdir -p out
-        flow record life_world.flow --frames "${2:-300}" --stride "${3:-1}" \
-            --out out/life_frames --gif out/life.gif
+    life-video)
+        mkdir -p out/frames
+        rm -f out/frames/f_*.ppm
+        GW_FRAMES="${2:-300}" GW_OUT=out/frames/f \
+        FLOW_LDFLAGS="-framework CoreText -framework CoreGraphics -framework CoreFoundation" \
+            flow run life_shot.flow 2>&1 | quiet
+        ffmpeg -y -loglevel error -framerate 30 -i out/frames/f_%04d.ppm \
+            -c:v libx264 -pix_fmt yuv420p -crf 20 out/life.mp4
+        echo "out/life.mp4"
         ;;
     equilibrium)
         mkdir -p out
@@ -101,7 +114,7 @@ case "${1:-gfx}" in
         flow run export_run.flow 2>&1 | quiet
         ;;
     *)
-        echo "usage: $0 [gfx|record N [stride]|bench|test|validate|export|equilibrium|life|life-bench|life-record N]" >&2
+        echo "usage: $0 [gfx|record N [stride]|bench|test|validate|export|equilibrium|life|life-bench|life-video N|shot]" >&2
         exit 2
         ;;
 esac

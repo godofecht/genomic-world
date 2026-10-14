@@ -2,11 +2,20 @@
 # bestiary of the most common plans.
 #
 # A body plan is the exact lattice of cell types (hashed). A plan held by at
-# least 10 organisms counts as a morphospecies. A predator is an organism
-# with at least one spike and one mouth.
+# least 10 organisms counts as a morphospecies.
+#
+# Trophic roles, from anatomy:
+#   predator    a spike and a mouth
+#   autotroph   photosynthetic cells and no mouth
+#   mixotroph   photosynthetic cells and a mouth, no spike
+#   grazer      a mouth, no spike, no photosynthetic cells
+#
+# Energy sources are summed over the ticks since the last record: grazing,
+# scavenging, photosynthesis and meat.
 
 import "stdlib/memory.flow"
 import .lconfig
+import .lgenome
 import .creature
 
 struct Census {
@@ -18,7 +27,25 @@ struct Census {
     plans: i32,
     morphospecies: i32,
     predators: f32,
+    autotrophs: f32,
+    mixotrophs: f32,
+    grazers: f32,
+    mean_photo: f32,
+    e_graze: f64,
+    e_scav: f64,
+    e_photo: f64,
+    e_meat: f64,
+    f_graze: f32,
+    f_scav: f32,
+    f_photo: f32,
+    f_meat: f32,
     mean_cells: f32,
+    max_cells: i32,
+    mean_resist: f32,
+    max_resist: f32,
+    mean_prog: f32,
+    max_prog: i32,
+    mean_x: f32,
     mean_eyes: f32,
     mean_speed: f32,
     mean_armor: f32,
@@ -34,11 +61,32 @@ struct Census {
     hist_pred: ptr<f32>,
     hist_cells: ptr<f32>,
     hist_species: ptr<f32>,
+    hist_auto: ptr<f32>,
+    hist_mixo: ptr<f32>,
+    hist_photo_e: ptr<f32>,
+    hist_meat_e: ptr<f32>,
+    hist_resist: ptr<f32>,
+    hist_prog: ptr<f32>,
+    hist_x: ptr<f32>,
     hist_head: i32,
     hist_count: i32
 }
 
 const L_HIST: i32 = 256
+
+const ROLE_GRAZER: i32 = 0
+const ROLE_PREDATOR: i32 = 1
+const ROLE_AUTOTROPH: i32 = 2
+const ROLE_MIXOTROPH: i32 = 3
+const ROLE_NONE: i32 = 4
+
+export function trophic_role(cr: ptr<Creature>, i: i32) -> i32 {
+    if cr[i].mouths > 0 and cr[i].attack > 0.0 { return ROLE_PREDATOR }
+    if cr[i].photo > 0.0 and cr[i].mouths == 0 { return ROLE_AUTOTROPH }
+    if cr[i].photo > 0.0 { return ROLE_MIXOTROPH }
+    if cr[i].mouths > 0 { return ROLE_GRAZER }
+    return ROLE_NONE
+}
 
 export function census_new() -> Census {
     return Census {
@@ -47,7 +95,10 @@ export function census_new() -> Census {
         example: alloc_i32(PLAN_SLOTS as i64),
         top: alloc_i32(BESTIARY as i64),
         top_count: alloc_i32(BESTIARY as i64),
-        plans: 0, morphospecies: 0, predators: 0.0, mean_cells: 0.0,
+        plans: 0, morphospecies: 0, predators: 0.0, autotrophs: 0.0, mixotrophs: 0.0,
+        grazers: 0.0, mean_photo: 0.0, e_graze: 0.0, e_scav: 0.0, e_photo: 0.0, e_meat: 0.0,
+        f_graze: 0.0, f_scav: 0.0, f_photo: 0.0, f_meat: 0.0, mean_cells: 0.0,
+        max_cells: 0, mean_resist: 0.0, max_resist: 0.0, mean_prog: 0.0, max_prog: 0, mean_x: 0.0,
         mean_eyes: 0.0, mean_speed: 0.0, mean_armor: 0.0, max_gen: 0,
         mean_width: 0.0, sel_v: 0.0, sel_w: 0.0, strength: 0.0,
         hist_strength: alloc_f32(L_HIST as i64),
@@ -57,6 +108,13 @@ export function census_new() -> Census {
         hist_pred: alloc_f32(L_HIST as i64),
         hist_cells: alloc_f32(L_HIST as i64),
         hist_species: alloc_f32(L_HIST as i64),
+        hist_auto: alloc_f32(L_HIST as i64),
+        hist_mixo: alloc_f32(L_HIST as i64),
+        hist_photo_e: alloc_f32(L_HIST as i64),
+        hist_meat_e: alloc_f32(L_HIST as i64),
+        hist_resist: alloc_f32(L_HIST as i64),
+        hist_prog: alloc_f32(L_HIST as i64),
+        hist_x: alloc_f32(L_HIST as i64),
         hist_head: 0, hist_count: 0
     }
 }
@@ -66,6 +124,10 @@ export function census_take(cs: ptr<Census>, cr: ptr<Creature>, n: i32) -> void 
         cs.counts[k] = 0
     }
     let mut pred: i32 = 0
+    let mut auto: i32 = 0
+    let mut mixo: i32 = 0
+    let mut graz: i32 = 0
+    let mut photo: f64 = 0.0
     let mut cells: f64 = 0.0
     let mut eyes: f64 = 0.0
     let mut speed: f64 = 0.0
@@ -74,7 +136,12 @@ export function census_take(cs: ptr<Census>, cr: ptr<Creature>, n: i32) -> void 
     let mut gmax: i32 = 0
     cs.plans = 0
     for i in 0 to n {
-        if cr[i].attack > 0.0 and cr[i].mouths > 0 { pred = pred + 1 }
+        let role: i32 = trophic_role(cr, i)
+        if role == ROLE_PREDATOR { pred = pred + 1 }
+        if role == ROLE_AUTOTROPH { auto = auto + 1 }
+        if role == ROLE_MIXOTROPH { mixo = mixo + 1 }
+        if role == ROLE_GRAZER { graz = graz + 1 }
+        photo = photo + (cr[i].photo as f64)
         cells = cells + (cr[i].cells as f64)
         eyes = eyes + (cr[i].eyes as f64)
         speed = speed + (cr[i].vmax as f64)
@@ -105,6 +172,10 @@ export function census_take(cs: ptr<Census>, cr: ptr<Creature>, n: i32) -> void 
     let fn: f64 = n as f64
     if n > 0 {
         cs.predators = ((pred as f64) / fn) as f32
+        cs.autotrophs = ((auto as f64) / fn) as f32
+        cs.mixotrophs = ((mixo as f64) / fn) as f32
+        cs.grazers = ((graz as f64) / fn) as f32
+        cs.mean_photo = (photo / fn) as f32
         cs.mean_cells = (cells / fn) as f32
         cs.mean_eyes = (eyes / fn) as f32
         cs.mean_speed = (speed / fn) as f32
@@ -144,8 +215,66 @@ export function census_selection(cs: ptr<Census>, par_v: f64, par_w: f64, par_n:
     }
 }
 
+# What needs the genomes and positions: developmental program length (the
+# number of cell identities, which duplication can raise without limit),
+# toxin resistance, cell counts, and mean position along x.
+export function census_genomes(cs: ptr<Census>, cr: ptr<Creature>, g: ptr<u32>, n: i32) -> void {
+    let mut prog: f64 = 0.0
+    let mut pmax: i32 = 0
+    let mut res: f64 = 0.0
+    let mut rmax: f32 = 0.0
+    let mut cmax: i32 = 0
+    let mut xs: f64 = 0.0
+    for i in 0 to n {
+        let gb: i32 = i * L_WORDS
+        let mut k: i32 = g[prog_at(gb, 0)] as i32
+        let kb: i32 = g[prog_at(gb, 1)] as i32
+        if kb > k { k = kb }
+        prog = prog + (k as f64)
+        if k > pmax { pmax = k }
+        res = res + (cr[i].resist as f64)
+        if cr[i].resist > rmax { rmax = cr[i].resist }
+        if cr[i].cells > cmax { cmax = cr[i].cells }
+        xs = xs + (cr[i].px as f64)
+    }
+    if n > 0 {
+        cs.mean_prog = (prog / (n as f64)) as f32
+        cs.mean_resist = (res / (n as f64)) as f32
+        cs.mean_x = (xs / (n as f64)) as f32
+    }
+    cs.max_prog = pmax
+    cs.max_resist = rmax
+    cs.max_cells = cmax
+}
+
+# Add one tick's energy intake by source.
+export function census_energy(cs: ptr<Census>, graze: f64, scav: f64, photo: f64, meat: f64) -> void {
+    cs.e_graze = cs.e_graze + graze
+    cs.e_scav = cs.e_scav + scav
+    cs.e_photo = cs.e_photo + photo
+    cs.e_meat = cs.e_meat + meat
+}
+
 export function census_record(cs: ptr<Census>, n: i32) -> void {
+    let tot: f64 = cs.e_graze + cs.e_scav + cs.e_photo + cs.e_meat
+    if tot > 0.0 {
+        cs.f_graze = (cs.e_graze / tot) as f32
+        cs.f_scav = (cs.e_scav / tot) as f32
+        cs.f_photo = (cs.e_photo / tot) as f32
+        cs.f_meat = (cs.e_meat / tot) as f32
+    }
+    cs.e_graze = 0.0
+    cs.e_scav = 0.0
+    cs.e_photo = 0.0
+    cs.e_meat = 0.0
     let k: i32 = cs.hist_head
+    cs.hist_auto[k] = cs.autotrophs
+    cs.hist_mixo[k] = cs.mixotrophs
+    cs.hist_photo_e[k] = cs.f_photo
+    cs.hist_meat_e[k] = cs.f_meat
+    cs.hist_resist[k] = cs.mean_resist
+    cs.hist_prog[k] = cs.mean_prog
+    cs.hist_x[k] = cs.mean_x
     cs.hist_strength[k] = cs.strength
     cs.hist_selv[k] = cs.sel_v
     cs.hist_width[k] = cs.mean_width

@@ -1,101 +1,294 @@
-# LIFE WORLD: organisms with bodies grown from their genomes.
+# LIFE WORLD: organisms that develop, behave and evolve, full screen.
 #
-# Each organism's body develops from a single core cell on a 7 x 7 lattice,
-# following genes that say, for each cell type and direction, whether to
-# grow and what to grow. Bodies are made of mouths, motors, eyes, armour,
-# stores and spikes, and everything about the organism follows from them:
-# what it can eat, how fast it moves, how far it sees, how hard it is to
-# kill, how much it costs to run. A one-layer brain, also genetic, turns
-# what the eyes see into turning and thrust.
+# Bodies grow from genomes: a developmental program of cell-identity genes
+# that can duplicate, so the number of cell kinds and body size are open;
+# or, in morphology mode, a single cell whose size, shape, pigment,
+# flagella, cilia, spines, eyespot and chlorophyll are genes; or both at
+# once. Bodies can be 2D or 3D. A brain with a memory layer, also genetic,
+# turns what the organism senses into turning and thrust.
 #
-# They live in water: a 2D incompressible flow (stable fluids) driven by
-# gyres whose strength cycles and whose pattern drifts, around the ridges
-# and through the passes. Bodies drift with the current and swim against
-# drag, so body shape matters. Nutrients upwell in patches that move.
+# Worlds: the open ocean (gyres, drifting upwelling, day and night), or a
+# laboratory vessel running a simplified version of a published
+# experiment: colony range expansion on agar, Gause's predator and prey,
+# the MEGA-plate antibiotic gradient, phototaxis on a slide, serial
+# transfer. Tab chooses; H lists every key.
 #
-# Founders are all the same three-cell grazer. Predators, armour, eyes and
-# new body plans have to evolve. Mating needs a similar developmental
-# genotype, so body plans that drift apart stop interbreeding.
+# The window opens full screen at the panel's native resolution, drawn by
+# the renderer in gviz (viz/) and shown through a Core Animation layer
+# (viz/display.flow).
 #
 # Run: ./run.sh life
 
 import "stdlib/gfx.flow"
 import "stdlib/keys.flow"
 import gsim.config
-import gsim.canvas
 import gsim.params
 import glife.lconfig
 import glife.lworld
 import glife.census
-import glife.lrender
+import glife.habitat
+import gviz.fb
+import gviz.camera
+import gviz.bodies
+import gviz.hud
+import gviz.view
+import gviz.view3d
+import gviz.display
 
-const CENSUS_EVERY: i32 = 8
+const CENSUS_EVERY: i32 = 64
+const KEY_SPACE_: i32 = 49
+const KEY_TAB_: i32 = 48
+const KEY_RETURN_: i32 = 36
+const KEY_THREE: i32 = 20
 
-struct LKeys {
-    held: array<bool, 8>
+struct Keys {
+    held: array<bool, 128>
 }
 
-function tap(g: Gfx, k: ptr<LKeys>, slot: i32, code: i32) -> bool {
+function tap(g: Gfx, k: ptr<Keys>, code: i32) -> bool {
     let down: bool = gfx_key_down(g, code)
-    let was: bool = k.held[slot]
-    k.held[slot] = down
+    let was: bool = k.held[code]
+    k.held[code] = down
     return down and !was
 }
 
-function main() -> i32 {
-    let mut seed: u32 = params_seed(20261014 as u32)
-    let mut l: Life = life_init(seed)
-    let mut cs: Census = census_new()
-    let cv: Canvas = canvas_new(L_WIN_W, L_WIN_H)
-    let mut ui: LifeUi = LifeUi { steps: 8, paused: false, zoom: false, zx: 96, zy: 96, flow_view: false }
-    let mut keys: LKeys = LKeys { held: [false, false, false, false, false, false, false, false] }
-    census_take(&cs, l.cr, l.n)
+struct App {
+    preset: i32,
+    seed: u32,
+    steps: i32,
+    paused: bool,
+    selected: u32,
+    quit: bool
+}
 
-    let g: Gfx = gfx_open(L_WIN_W, L_WIN_H, "Life World - Flow")
-    let mut frame: i32 = 0
-    while gfx_frame_pump(g) {
-        if tap(g, &keys, 0, KEY_P) { ui.paused = !ui.paused }
-        if tap(g, &keys, 1, KEY_B) { life_set_passes(&l, !l.env.passes_open) }
-        if tap(g, &keys, 2, KEY_W) {
-            if l.env.climate.target < 0.15 { l.env.warming_dir = 1 } else { l.env.warming_dir = -1 }
-        }
-        if tap(g, &keys, 3, KEY_RBRACKET) and ui.steps < 64 { ui.steps = ui.steps * 2 }
-        if tap(g, &keys, 4, KEY_LBRACKET) and ui.steps > 1 { ui.steps = ui.steps / 2 }
-        if tap(g, &keys, 6, KEY_Z) { ui.zoom = !ui.zoom }
-        if tap(g, &keys, 7, KEY_F) { ui.flow_view = !ui.flow_view }
-        if ui.zoom {
-            if gfx_key_down(g, KEY_LEFT) { ui.zx = (ui.zx + WORLD_W - 1) % WORLD_W }
-            if gfx_key_down(g, KEY_RIGHT) { ui.zx = (ui.zx + 1) % WORLD_W }
-            if gfx_key_down(g, KEY_UP) { ui.zy = (ui.zy + WORLD_H - 1) % WORLD_H }
-            if gfx_key_down(g, KEY_DOWN) { ui.zy = (ui.zy + 1) % WORLD_H }
-        }
-        if tap(g, &keys, 5, KEY_R) {
-            seed = seed * (1664525 as u32) + (1013904223 as u32)
-            l = life_init(seed)
-            cs = census_new()
-        }
-        if !ui.paused and l.n > 0 {
-            for k in 0 to ui.steps {
-                life_step(&l)
-                if (l.tick % (64 as u32)) == (0 as u32) {
-                    census_take(&cs, l.cr, l.n)
-                    census_selection(&cs, l.par_v, l.par_w, l.par_n, l.fluid.strength)
-                    l.par_v = 0.0
-                    l.par_w = 0.0
-                    l.par_n = 0.0
-                    census_record(&cs, l.n)
-                }
+function census_tick(l: ptr<Life>, cs: ptr<Census>) -> void {
+    census_energy(cs, l.gain_graze, l.gain_scav, l.gain_photo, l.gain_meat)
+    if (l.tick % (CENSUS_EVERY as u32)) == (0 as u32) {
+        census_take(cs, l.cr, l.n)
+        census_genomes(cs, l.cr, l.genome, l.n)
+        census_selection(cs, l.par_v, l.par_w, l.par_n, l.fluid.strength)
+        l.par_v = 0.0
+        l.par_w = 0.0
+        l.par_n = 0.0
+        census_record(cs, l.n)
+    }
+}
+
+function find_seed(l: ptr<Life>, seed: u32) -> i32 {
+    if seed == (0 as u32) { return -1 }
+    for i in 0 to l.n {
+        if l.cr[i].seed == seed { return i }
+    }
+    return -1
+}
+
+function main() -> i32 {
+    let scr: Screen = disp_screen()
+    let mut w: i32 = scr.w
+    let mut h: i32 = scr.h
+    if w < 640 or h < 480 {
+        w = 1920
+        h = 1200
+    }
+    let mut app: App = App { preset: P_OCEAN, seed: params_seed(20261014 as u32), steps: 8,
+                             paused: false, selected: 0 as u32, quit: false }
+    let mut l: Life = life_create(app.seed, app.preset, MODE_PLAN, 2)
+    let mut cs: Census = census_new()
+    census_take(&cs, l.cr, l.n)
+    census_genomes(&cs, l.cr, l.genome, l.n)
+    let mut v: View = view_new(w, h)
+    view_reset(&v, &l)
+    let mut keys: Keys = Keys { held: [false, false, false, false] }
+
+    let g: Gfx = gfx_open(1280, 800, "Life World")
+    let attached: bool = disp_attach()
+    disp_fullscreen()
+    let mut wheel: i32 = gfx_mouse_wheel(g)
+    let mut down_l: bool = false
+    let mut down_r: bool = false
+    let mut press_x: i32 = 0
+    let mut press_y: i32 = 0
+    let mut last_x: i32 = 0
+    let mut last_y: i32 = 0
+    let mut dragged: bool = false
+    let mut fps: f32 = 60.0
+    let mut t_last: f64 = gfx_time_ms(g)
+
+    while !app.quit {
+        gfx_poll(g)
+        if gfx_should_close(g) { app.quit = true }
+
+        # Keys.
+        if tap(g, &keys, KEY_Q) { app.quit = true }
+        if tap(g, &keys, KEY_ESC) {
+            if v.hud.menu {
+                v.hud.menu = false
+            } elif v.hud.help {
+                v.hud.help = false
+            } elif app.selected != (0 as u32) {
+                app.selected = 0 as u32
+            } elif disp_is_fullscreen() {
+                disp_fullscreen()
+            } else {
+                app.quit = true
             }
         }
-        if frame % CENSUS_EVERY == 0 {
-            census_take(&cs, l.cr, l.n)
+        if tap(g, &keys, KEY_RETURN_) {
+            if v.hud.menu {
+                app.preset = v.hud.menu_sel
+                app.seed = app.seed * (1664525 as u32) + (1013904223 as u32)
+                l = life_create(app.seed, app.preset, v.hud.menu_mode, v.hud.menu_dims)
+                cs = census_new()
+                census_take(&cs, l.cr, l.n)
+                census_genomes(&cs, l.cr, l.genome, l.n)
+                view_reset(&v, &l)
+                app.selected = 0 as u32
+                v.hud.menu = false
+                hud_toast(&v.hud, preset_name(app.preset))
+            } else {
+                disp_fullscreen()
+            }
         }
-        life_render(cv, &l, &cs, ui)
-        gfx_blit_rgb(g, 0, 0, L_WIN_W, L_WIN_H, cv.px)
-        gfx_present(g)
+        if tap(g, &keys, KEY_TAB_) {
+            v.hud.menu = !v.hud.menu
+            v.hud.menu_sel = app.preset
+            v.hud.menu_mode = l.cfg.mode
+            v.hud.menu_dims = l.cfg.dims
+        }
+        if v.hud.menu {
+            if tap(g, &keys, KEY_UP) { v.hud.menu_sel = (v.hud.menu_sel + P_COUNT - 1) % P_COUNT }
+            if tap(g, &keys, KEY_DOWN) { v.hud.menu_sel = (v.hud.menu_sel + 1) % P_COUNT }
+            if tap(g, &keys, KEY_M) { v.hud.menu_mode = (v.hud.menu_mode + 1) % 3 }
+            if tap(g, &keys, KEY_D) { v.hud.menu_dims = 5 - v.hud.menu_dims }
+        } else {
+            if tap(g, &keys, KEY_SPACE_) or tap(g, &keys, KEY_P) { app.paused = !app.paused }
+            if tap(g, &keys, KEY_RBRACKET) and app.steps < 64 { app.steps = app.steps * 2 }
+            if tap(g, &keys, KEY_LBRACKET) and app.steps > 1 { app.steps = app.steps / 2 }
+            if tap(g, &keys, KEY_H) { v.hud.help = !v.hud.help }
+            if tap(g, &keys, KEY_I) { v.hud.show = !v.hud.show }
+            if tap(g, &keys, KEY_F) { v.flow_view = !v.flow_view }
+            if tap(g, &keys, KEY_V) {
+                v.style = (v.style + 1) % 3
+                if v.style == STYLE_NATURAL { hud_toast(&v.hud, "Natural colour") }
+                if v.style == STYLE_BRIGHT { hud_toast(&v.hud, "Bright-field") }
+                if v.style == STYLE_DARK { hud_toast(&v.hud, "Dark-field") }
+            }
+            if tap(g, &keys, KEY_THREE) {
+                v.view3d = !v.view3d
+                if v.view3d {
+                    v.cam3.tx = v.cam.cx
+                    v.cam3.ty = v.cam.cy
+                    hud_toast(&v.hud, "3D view: drag to pan, right-drag to turn, wheel to zoom")
+                } else {
+                    hud_toast(&v.hud, "2D view")
+                }
+            }
+            if tap(g, &keys, KEY_O) and l.cfg.habitat == HAB_OCEAN {
+                life_set_passes(&l, !l.env.passes_open)
+                if l.env.passes_open { hud_toast(&v.hud, "Passes open") } else { hud_toast(&v.hud, "Passes closed") }
+            }
+            if tap(g, &keys, KEY_W) {
+                if l.env.climate.target < 0.15 { l.env.warming_dir = 1 } else { l.env.warming_dir = -1 }
+                hud_toast(&v.hud, "Climate target changed")
+            }
+            if tap(g, &keys, KEY_R) {
+                app.seed = app.seed * (1664525 as u32) + (1013904223 as u32)
+                l = life_create(app.seed, app.preset, l.cfg.mode, l.cfg.dims)
+                cs = census_new()
+                census_take(&cs, l.cr, l.n)
+                census_genomes(&cs, l.cr, l.genome, l.n)
+                view_reset(&v, &l)
+                app.selected = 0 as u32
+                hud_toast(&v.hud, "New seed")
+            }
+            if tap(g, &keys, KEY_Z) {
+                let keep: i32 = v.style
+                view_reset(&v, &l)
+                v.style = keep
+            }
+            let pan: f32 = 14.0
+            if gfx_key_down(g, KEY_LEFT) { cam_pan(&v.cam, pan, 0.0) }
+            if gfx_key_down(g, KEY_RIGHT) { cam_pan(&v.cam, 0.0 - pan, 0.0) }
+            if gfx_key_down(g, KEY_UP) { cam_pan(&v.cam, 0.0, pan) }
+            if gfx_key_down(g, KEY_DOWN) { cam_pan(&v.cam, 0.0, 0.0 - pan) }
+        }
+
+        # Pointer: wheel zooms, drag pans (right-drag turns in 3D), a click
+        # follows an organism.
+        let p: Pointer = disp_mouse(w, h)
+        let wnow: i32 = gfx_mouse_wheel(g)
+        let dw: i32 = wnow - wheel
+        wheel = wnow
+        if dw != 0 and p.inside {
+            let mut k: f32 = 1.0
+            for q in 0 to abs_i(dw) {
+                k = k * 1.12
+            }
+            if dw < 0 { k = 1.0 / k }
+            if v.view3d { cam3_zoom(&v.cam3, 1.0 / k) } else { cam_zoom_at(&v.cam, p.x as f32, p.y as f32, k) }
+        }
+        if p.left and !down_l {
+            press_x = p.x
+            press_y = p.y
+            last_x = p.x
+            last_y = p.y
+            dragged = false
+        }
+        if p.left and down_l {
+            let dx: i32 = p.x - last_x
+            let dy: i32 = p.y - last_y
+            if abs_i(p.x - press_x) + abs_i(p.y - press_y) > 8 { dragged = true }
+            if dragged {
+                if v.view3d { cam3_pan(&v.cam3, dx as f32, dy as f32) } else { cam_pan(&v.cam, dx as f32, dy as f32) }
+            }
+            last_x = p.x
+            last_y = p.y
+        }
+        if !p.left and down_l and !dragged and !v.hud.menu {
+            let i: i32 = view_pick(&v, &l, p.x as f32, p.y as f32)
+            if i >= 0 {
+                app.selected = l.cr[i].seed
+            } else {
+                app.selected = 0 as u32
+            }
+        }
+        down_l = p.left
+        if p.right and down_r and v.view3d {
+            cam3_orbit(&v.cam3, ((p.x - last_x) as f32) * 0.005, ((p.y - last_y) as f32) * 0.004)
+        }
+        if p.right {
+            last_x = p.x
+            last_y = p.y
+        }
+        down_r = p.right
+
+        # Simulate.
+        if !app.paused and l.n > 0 and !v.hud.menu {
+            for k in 0 to app.steps {
+                life_step(&l)
+                census_tick(&l, &cs)
+            }
+            view_tick(&v, &l, app.steps)
+        } else {
+            view_tick(&v, &l, 0)
+        }
+        let sel: i32 = find_seed(&l, app.selected)
+        if sel < 0 { app.selected = 0 as u32 }
+        view_follow(&v, &l, sel)
+
+        let f: Frame = view_render(&v, &l, &cs, app.preset, app.steps, app.paused, sel, fps)
+        disp_present(f.px, w, h)
         gfx_wait_frame(g, 60)
-        frame = frame + 1
+        let now: f64 = gfx_time_ms(g)
+        let dt: f64 = now - t_last
+        t_last = now
+        if dt > 0.0 { fps = fps + 0.1 * (((1000.0 / dt) as f32) - fps) }
     }
     gfx_close(g)
     return 0
+}
+
+function abs_i(v: i32) -> i32 {
+    if v < 0 { return 0 - v }
+    return v
 }

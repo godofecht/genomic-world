@@ -1,21 +1,51 @@
-# Genome of a life-world organism: 256 loci on eight chromosomes, diploid.
+# Genome of a life-world organism, diploid.
 #
-#   loci   0-111  developmental genes: 28 genes of 4 bits, one per
-#                 (cell type 1-7, direction E N W S). Bit 3: grow. Bits
-#                 0-2: daughter cell type (0 means core).
-#   loci 112-127  thermal optimum, 16 additive loci
-#   loci 128-211  brain: 14 weights of 6 bits, additive across homologs
-#   loci 212-223  breeding threshold, 12 additive loci
-#   loci 224-253  neutral markers, three blocks of ten read as colour
-#   loci 254-255  neutral
+# FIXED PART: 640 loci per haplotype on twenty chromosomes of 32.
 #
-# Developmental genes follow a dominance series, as at the C locus for rabbit
-# coat colour: of the two alleles, the one with the larger 4-bit value is
-# expressed. A growing allele is therefore dominant over a silent one. The
-# rule is symmetric in the two homologs.
+#   loci   0-127  morphology and physiology, quantitative (dosage of a
+#                 block of loci) or small integers (a few bits, larger
+#                 allele dominant):
+#                   size 8, elongation 8, lobe depth 6, lobe count 3 bits,
+#                   hue 8, saturation 6, lightness 6, pattern 2 bits,
+#                   pattern scale 4, flagella 3 bits, flagellum length 6,
+#                   cilia 6, spines 4 bits, spine length 6, membrane 6,
+#                   chlorophyll 8, toxin resistance 8, cytostome 6,
+#                   eyespot 4, lipid 4, developmental rounds 12,
+#                   raptorial 4
+#   loci 128-559  brain: 72 weights of 6 bits, additive across homologs
+#   loci 560-575  thermal optimum, 16 additive loci
+#   loci 576-587  breeding threshold, 12 additive loci
+#   loci 588-617  neutral markers, three blocks of ten read as colour
+#   loci 618-639  neutral
 #
-# Meiosis reuses gen_meiosis_word from the genomic world, chromosome by
-# chromosome, so recombination is Haldane's model there too.
+# DEVELOPMENTAL PROGRAM: a list of cell-identity genes, each two words.
+# A body cell carries an identity; its gene says what type of cell it is
+# and, for each direction, whether it grows a neighbour and which identity
+# that neighbour takes (target index modulo the program's length).
+#
+#   word 0  bits  0-2  cell type minus one
+#           bits  3-6  timer: rounds after its birth a cell keeps growing
+#           bits  7-13 east    } each 7 bits: grow (bit 6), target (0-5)
+#           bits 14-20 north   }
+#           bits 21-27 west    }
+#           bits 28-31 cell size, for the look in combined mode
+#   word 1  bits  0-6  south
+#           bits  7-13 up      } used by 3D bodies only
+#           bits 14-20 down    }
+#           bits 21-24 hue shift, for the look in combined mode
+#           bits 25-31 neutral
+#
+# The two homologs' programs may differ in length. The expressed program
+# is as long as the longer one; where both have gene k, each field takes
+# the larger allele, so growing is dominant over not growing (a dominance
+# series, as at the C locus for rabbit coat colour).
+#
+# Meiosis: the fixed part recombines by gen_meiosis_word, chromosome by
+# chromosome (Haldane's model). The programs cross over at most once per
+# meiosis; a crossover is usually at the same gene index on both homologs,
+# but sometimes misaligned by one, which duplicates or deletes a gene, as
+# unequal crossing-over does. Point mutations, gene duplications and
+# deletions add to this.
 
 import gsim.config
 import gsim.rng
@@ -23,14 +53,47 @@ import gsim.bits
 import gsim.genome
 import .lconfig
 
-const LOC_THERMAL: i32 = 112
-const LOC_BRAIN: i32 = 128
-const LOC_THR: i32 = 212
-const LOC_MARK: i32 = 224
-const DEV_GENES: i32 = 28
+extern {
+    function expf(x: f32) -> f32
+}
 
-# n bits (n <= 16) starting at locus pos of one homolog set starting at word
-# base. Handles a field that straddles two words.
+const M_SIZE: i32 = 0
+const M_ELONG: i32 = 8
+const M_LOBES: i32 = 16
+const M_LOBEN: i32 = 22
+const M_HUE: i32 = 25
+const M_SAT: i32 = 33
+const M_LIGHT: i32 = 39
+const M_PATTERN: i32 = 45
+const M_PSCALE: i32 = 47
+const M_FLAGN: i32 = 51
+const M_FLAGL: i32 = 54
+const M_CILIA: i32 = 60
+const M_SPINEN: i32 = 66
+const M_SPINEL: i32 = 70
+const M_MEMBRANE: i32 = 76
+const M_CHLORO: i32 = 82
+const M_RESIST: i32 = 90
+const M_MOUTH: i32 = 98
+const M_EYESPOT: i32 = 104
+const M_LIPID: i32 = 108
+const M_ROUNDS: i32 = 112
+const M_RAPTOR: i32 = 124
+
+const LOC_BRAIN: i32 = 128
+const LOC_THERMAL: i32 = 560
+const LOC_THR: i32 = 576
+const LOC_MARK: i32 = 588
+
+# Program genes: crossover chance per meiosis, chance that a crossover is
+# misaligned, and duplication and deletion rates per gamete.
+const PROG_XO: f32 = 0.4
+const PROG_UNEQUAL: f32 = 0.08
+const PROG_DUP: f32 = 0.004
+const PROG_DEL: f32 = 0.004
+
+# n bits (n <= 16) starting at locus pos of one homolog's fixed part
+# starting at word base. Handles a field that straddles two words.
 export function bits_at(g: ptr<u32>, base: i32, pos: i32, n: i32) -> u32 {
     let w: i32 = pos >> 5
     let off: u32 = (pos & 31) as u32
@@ -42,6 +105,7 @@ export function bits_at(g: ptr<u32>, base: i32, pos: i32, n: i32) -> u32 {
     return v & low_mask(n)
 }
 
+# Additive dosage over count loci, both homologs.
 export function l_dosage(g: ptr<u32>, base: i32, first: i32, count: i32) -> i32 {
     let mut d: i32 = 0
     for k in 0 to count {
@@ -50,27 +114,46 @@ export function l_dosage(g: ptr<u32>, base: i32, first: i32, count: i32) -> i32 
     return d
 }
 
-# Expressed developmental genes, packed eight per word into out[ob..ob+4].
-export function l_dev_express(g: ptr<u32>, base: i32, out: ptr<u32>, ob: i32) -> void {
-    for w in 0 to 4 {
-        out[ob + w] = 0 as u32
-    }
-    for k in 0 to DEV_GENES {
-        let a: u32 = bits_at(g, base, k * 4, 4)
-        let b: u32 = bits_at(g, base + L_CHROMS, k * 4, 4)
-        let mut e: u32 = a
-        if b > a { e = b }
-        out[ob + (k >> 3)] = out[ob + (k >> 3)] | (e << (((k & 7) * 4) as u32))
+# Dosage as a fraction of its maximum.
+export function l_frac(g: ptr<u32>, base: i32, first: i32, count: i32) -> f32 {
+    return (l_dosage(g, base, first, count) as f32) / ((2 * count) as f32)
+}
+
+# A small integer trait: the larger of the two homologs' n-bit values.
+export function l_int(g: ptr<u32>, base: i32, first: i32, n: i32) -> i32 {
+    let a: u32 = bits_at(g, base, first, n)
+    let b: u32 = bits_at(g, base + L_CHROMS, first, n)
+    if a > b { return a as i32 }
+    return b as i32
+}
+
+# Set or clear one fixed locus on one homolog (hb is that homolog's base).
+export function l_set_locus(g: ptr<u32>, hb: i32, pos: i32, on: bool) -> void {
+    let word: i32 = hb + (pos >> 5)
+    let bit: u32 = (1 as u32) << ((pos & 31) as u32)
+    if on {
+        g[word] = g[word] | bit
+    } else {
+        g[word] = g[word] & invert32(bit)
     }
 }
 
-# Bits that differ between two expressed developmental genotypes.
-export function l_dev_distance(dev: ptr<u32>, ia: i32, ib: i32) -> i32 {
-    let mut d: i32 = 0
-    for w in 0 to 4 {
-        d = d + popcount32(dev[ia * 4 + w] ^ dev[ib * 4 + w])
+# Set a block of loci on both homologs to give the stated dosage, filling
+# from the first locus.
+export function l_set_dosage(g: ptr<u32>, base: i32, first: i32, count: i32, dose: i32) -> void {
+    for k in 0 to count {
+        l_set_locus(g, base, first + k, k < (dose + 1) / 2)
+        l_set_locus(g, base + L_CHROMS, first + k, k < dose / 2)
     }
-    return d
+}
+
+# Set an n-bit integer trait on both homologs.
+export function l_set_int(g: ptr<u32>, base: i32, first: i32, n: i32, v: i32) -> void {
+    for b in 0 to n {
+        let on: bool = ((v >> b) & 1) == 1
+        l_set_locus(g, base, first + b, on)
+        l_set_locus(g, base + L_CHROMS, first + b, on)
+    }
 }
 
 # Brain weight k in [-3.94, 3.94]: the two homologs' 6-bit values summed.
@@ -80,53 +163,260 @@ export function l_weight(g: ptr<u32>, base: i32, k: i32) -> f32 {
     return (((a + b) as f32) - 63.0) / 16.0
 }
 
-# One gamete of 8 words from parent src[sb..sb+16] into dst[db..db+8].
-export function l_gamete(src: ptr<u32>, sb: i32, dst: ptr<u32>, db: i32,
-                         st: ptr<u32>, a: ptr<Arch>, lambda: f32, p0: f32) -> void {
+# Write brain weight k as close to w as two 6-bit homolog values allow:
+# their sum is 16 w + 63, split as evenly as possible.
+export function l_set_weight(g: ptr<u32>, base: i32, k: i32, w: f32) -> void {
+    let mut sum: i32 = (w * 16.0 + 63.5) as i32
+    if w * 16.0 + 63.5 < 0.0 { sum = 0 }
+    if sum > 126 { sum = 126 }
+    let a: i32 = sum / 2
+    let b: i32 = sum - a
+    for b2 in 0 to 6 {
+        l_set_locus(g, base, LOC_BRAIN + k * 6 + b2, ((a >> b2) & 1) == 1)
+        l_set_locus(g, base + L_CHROMS, LOC_BRAIN + k * 6 + b2, ((b >> b2) & 1) == 1)
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Developmental program
+# ---------------------------------------------------------------------------
+
+# Word address of homolog h's program within the genome at gb.
+export function prog_at(gb: i32, h: i32) -> i32 {
+    return gb + L_FIXED + h * DEVH
+}
+
+export function gene_field(w: u32, shift: i32, width: i32) -> i32 {
+    return ((w >> (shift as u32)) & low_mask(width)) as i32
+}
+
+function put_field(w: u32, shift: i32, width: i32, v: i32) -> u32 {
+    let m: u32 = low_mask(width) << (shift as u32)
+    return (w & invert32(m)) | (((v as u32) << (shift as u32)) & m)
+}
+
+function max_field(a: u32, b: u32, shift: i32, width: i32, out: u32) -> u32 {
+    let x: i32 = gene_field(a, shift, width)
+    let y: i32 = gene_field(b, shift, width)
+    let mut v: i32 = x
+    if y > x { v = y }
+    return put_field(out, shift, width, v)
+}
+
+# Direction d's 7-bit field (E N W S U D) of a gene.
+export function gene_dir(w0: u32, w1: u32, d: i32) -> i32 {
+    if d == 0 { return gene_field(w0, 7, 7) }
+    if d == 1 { return gene_field(w0, 14, 7) }
+    if d == 2 { return gene_field(w0, 21, 7) }
+    if d == 3 { return gene_field(w1, 0, 7) }
+    if d == 4 { return gene_field(w1, 7, 7) }
+    return gene_field(w1, 14, 7)
+}
+
+# A gene from its parts.
+export function make_gene0(cell_type: i32, timer: i32, e: i32, n: i32, w: i32, size: i32) -> u32 {
+    let mut x: u32 = 0 as u32
+    x = put_field(x, 0, 3, cell_type - 1)
+    x = put_field(x, 3, 4, timer)
+    x = put_field(x, 7, 7, e)
+    x = put_field(x, 14, 7, n)
+    x = put_field(x, 21, 7, w)
+    x = put_field(x, 28, 4, size)
+    return x
+}
+
+export function make_gene1(s: i32, u: i32, d: i32, hue: i32) -> u32 {
+    let mut x: u32 = 0 as u32
+    x = put_field(x, 0, 7, s)
+    x = put_field(x, 7, 7, u)
+    x = put_field(x, 14, 7, d)
+    x = put_field(x, 21, 4, hue)
+    return x
+}
+
+# A direction field that grows a neighbour of identity `target`.
+export function grow_to(target: i32) -> i32 {
+    return 64 | (target & 63)
+}
+
+# The expressed program at out[ob..]: length, then merged genes.
+export function prog_express(g: ptr<u32>, gb: i32, out: ptr<u32>, ob: i32) -> void {
+    let pa: i32 = prog_at(gb, 0)
+    let pb: i32 = prog_at(gb, 1)
+    let ka: i32 = g[pa] as i32
+    let kb: i32 = g[pb] as i32
+    let mut k: i32 = ka
+    if kb > k { k = kb }
+    out[ob] = k as u32
+    for i in 0 to k {
+        let mut w0: u32 = 0 as u32
+        let mut w1: u32 = 0 as u32
+        if i < ka and i < kb {
+            let a0: u32 = g[pa + 1 + 2 * i]
+            let a1: u32 = g[pa + 2 + 2 * i]
+            let b0: u32 = g[pb + 1 + 2 * i]
+            let b1: u32 = g[pb + 2 + 2 * i]
+            w0 = max_field(a0, b0, 0, 3, w0)
+            w0 = max_field(a0, b0, 3, 4, w0)
+            w0 = max_field(a0, b0, 7, 7, w0)
+            w0 = max_field(a0, b0, 14, 7, w0)
+            w0 = max_field(a0, b0, 21, 7, w0)
+            w0 = max_field(a0, b0, 28, 4, w0)
+            w1 = max_field(a1, b1, 0, 7, w1)
+            w1 = max_field(a1, b1, 7, 7, w1)
+            w1 = max_field(a1, b1, 14, 7, w1)
+            w1 = max_field(a1, b1, 21, 4, w1)
+            w1 = max_field(a1, b1, 25, 7, w1)
+        } elif i < ka {
+            w0 = g[pa + 1 + 2 * i]
+            w1 = g[pa + 2 + 2 * i]
+        } else {
+            w0 = g[pb + 1 + 2 * i]
+            w1 = g[pb + 2 + 2 * i]
+        }
+        out[ob + 1 + 2 * i] = w0
+        out[ob + 2 + 2 * i] = w1
+    }
+}
+
+# Mate recognition signature: each gene's words folded in with a rotation
+# that depends on its index, so one changed bit changes one signature
+# bit, and a gene gained or lost changes many.
+export function prog_signature(x: ptr<u32>, xb: i32) -> u64 {
+    let k: i32 = x[xb] as i32
+    let mut s0: u32 = (k as u32) * (0x9e3779b9 as u32)
+    let mut s1: u32 = 0 as u32
+    for i in 0 to k {
+        let r: u32 = ((i * 5) & 31) as u32
+        let a: u32 = x[xb + 1 + 2 * i]
+        let b: u32 = x[xb + 2 + 2 * i]
+        if r == (0 as u32) {
+            s0 = s0 ^ a
+            s1 = s1 ^ b
+        } else {
+            s0 = s0 ^ ((a << r) | (a >> ((32 as u32) - r)))
+            s1 = s1 ^ ((b << r) | (b >> ((32 as u32) - r)))
+        }
+    }
+    return ((s1 as u64) << (32 as u64)) | (s0 as u64)
+}
+
+export function sig_distance(a: u64, b: u64) -> i32 {
+    let x: u64 = a ^ b
+    return popcount32((x & (0xffffffff as u64)) as u32) + popcount32((x >> (32 as u64)) as u32)
+}
+
+# One gamete's program: from homologs at addresses sa and sb into address
+# d. Source and destination are different organisms' slots.
+function prog_gamete(g: ptr<u32>, sa: i32, sb: i32, d: i32, st: ptr<u32>, mu: f32) -> void {
+    let mut first: i32 = sa
+    let mut second: i32 = sb
+    if (rng_next(st) & (1 as u32)) == (1 as u32) {
+        first = sb
+        second = sa
+    }
+    let k1: i32 = g[first] as i32
+    let k2: i32 = g[second] as i32
+    let mut n: i32 = 0
+    if rng_unit(st) < PROG_XO {
+        # Crossover after gene i of the first homolog, joining gene j of
+        # the second; j = i unless misaligned.
+        let i: i32 = rng_below(st, k1 + 1)
+        let mut j: i32 = i
+        if rng_unit(st) < PROG_UNEQUAL {
+            if (rng_next(st) & (1 as u32)) == (1 as u32) { j = i + 1 } else { j = i - 1 }
+        }
+        if j < 0 { j = 0 }
+        if j > k2 { j = k2 }
+        for q in 0 to i {
+            if n < DEVG_MAX {
+                g[d + 1 + 2 * n] = g[first + 1 + 2 * q]
+                g[d + 2 + 2 * n] = g[first + 2 + 2 * q]
+                n = n + 1
+            }
+        }
+        for q in j to k2 {
+            if n < DEVG_MAX {
+                g[d + 1 + 2 * n] = g[second + 1 + 2 * q]
+                g[d + 2 + 2 * n] = g[second + 2 + 2 * q]
+                n = n + 1
+            }
+        }
+    } else {
+        for q in 0 to k1 {
+            g[d + 1 + 2 * q] = g[first + 1 + 2 * q]
+            g[d + 2 + 2 * q] = g[first + 2 + 2 * q]
+        }
+        n = k1
+    }
+    if n == 0 {
+        # Never empty: keep the first homolog's first gene.
+        g[d + 1] = g[first + 1]
+        g[d + 2] = g[first + 2]
+        n = 1
+    }
+    # Point mutations at mu per bit.
+    let lam: f32 = mu * ((64 * n) as f32)
+    let muts: i32 = gen_poisson(st, lam, expf(0.0 - lam))
+    for m in 0 to muts {
+        let bit: i32 = rng_below(st, 64 * n)
+        let w: i32 = d + 1 + (bit >> 5)
+        g[w] = g[w] ^ ((1 as u32) << ((bit & 31) as u32))
+    }
+    # Duplication: a copy of gene q goes in right after it.
+    if n < DEVG_MAX and rng_unit(st) < PROG_DUP {
+        let q: i32 = rng_below(st, n)
+        let mut t: i32 = n
+        while t > q + 1 {
+            g[d + 1 + 2 * t] = g[d - 1 + 2 * t]
+            g[d + 2 + 2 * t] = g[d + 2 * t]
+            t = t - 1
+        }
+        g[d + 1 + 2 * (q + 1)] = g[d + 1 + 2 * q]
+        g[d + 2 + 2 * (q + 1)] = g[d + 2 + 2 * q]
+        n = n + 1
+    }
+    # Deletion of a gene other than the first.
+    if n > 1 and rng_unit(st) < PROG_DEL {
+        let q: i32 = 1 + rng_below(st, n - 1)
+        for t in q to n - 1 {
+            g[d + 1 + 2 * t] = g[d + 3 + 2 * t]
+            g[d + 2 + 2 * t] = g[d + 4 + 2 * t]
+        }
+        n = n - 1
+    }
+    g[d] = n as u32
+}
+
+# One gamete from the parent genome at word sb into homolog h of the child
+# genome at db: fixed chromosomes, then the program.
+export function l_gamete(g: ptr<u32>, sb: i32, db: i32, h: i32,
+                         st: ptr<u32>, a: ptr<Arch>, lambda: f32, p0: f32, mu: f32) -> void {
+    let hb: i32 = db + h * L_CHROMS
     for c in 0 to L_CHROMS {
-        dst[db + c] = gen_meiosis_word(src[sb + c], src[sb + c + L_CHROMS], st, a)
+        g[hb + c] = gen_meiosis_word(g[sb + c], g[sb + c + L_CHROMS], st, a)
     }
     let muts: i32 = gen_poisson(st, lambda, p0)
     for m in 0 to muts {
         let locus: i32 = rng_below(st, L_LOCI)
         let w: i32 = locus >> 5
-        dst[db + w] = dst[db + w] ^ ((1 as u32) << ((locus & 31) as u32))
+        g[hb + w] = g[hb + w] ^ ((1 as u32) << ((locus & 31) as u32))
     }
+    prog_gamete(g, prog_at(sb, 0), prog_at(sb, 1), prog_at(db, h), st, mu)
 }
 
 export function l_cross(g: ptr<u32>, mom: i32, dad: i32, child: i32,
-                        st: ptr<u32>, a: ptr<Arch>, lambda: f32, p0: f32) -> void {
-    l_gamete(g, mom * L_WORDS, g, child * L_WORDS, st, a, lambda, p0)
-    l_gamete(g, dad * L_WORDS, g, child * L_WORDS + L_CHROMS, st, a, lambda, p0)
+                        st: ptr<u32>, a: ptr<Arch>, lambda: f32, p0: f32, mu: f32) -> void {
+    l_gamete(g, mom * L_WORDS, child * L_WORDS, 0, st, a, lambda, p0, mu)
+    l_gamete(g, dad * L_WORDS, child * L_WORDS, 1, st, a, lambda, p0, mu)
 }
 
-# Write a 4-bit developmental gene on both homologs.
-export function l_set_gene(g: ptr<u32>, base: i32, cell_type: i32, dir: i32, value: u32) -> void {
-    let k: i32 = (cell_type - 1) * 4 + dir
-    let pos: i32 = k * 4
-    let w: i32 = pos >> 5
-    let off: u32 = (pos & 31) as u32
-    let clear: u32 = invert32(low_mask(4) << off)
-    g[base + w] = (g[base + w] & clear) | (value << off)
-    g[base + w + L_CHROMS] = (g[base + w + L_CHROMS] & clear) | (value << off)
-}
-
-# Write brain weight k on both homologs as close to w as 6-bit values allow.
-export function l_set_weight(g: ptr<u32>, base: i32, k: i32, w: f32) -> void {
-    let mut v: i32 = ((w * 16.0 + 63.0) * 0.5 + 0.5) as i32
-    if v < 0 { v = 0 }
-    if v > 63 { v = 63 }
+# Write gene k of both homologs' programs, extending them if needed.
+export function prog_set(g: ptr<u32>, gb: i32, k: i32, w0: u32, w1: u32) -> void {
     for h in 0 to 2 {
-        let hb: i32 = base + h * L_CHROMS
-        for b in 0 to 6 {
-            let pos: i32 = LOC_BRAIN + k * 6 + b
-            let word: i32 = hb + (pos >> 5)
-            let bit: u32 = (1 as u32) << ((pos & 31) as u32)
-            if ((v >> b) & 1) == 1 {
-                g[word] = g[word] | bit
-            } else {
-                g[word] = g[word] & invert32(bit)
-            }
-        }
+        let p: i32 = prog_at(gb, h)
+        g[p + 1 + 2 * k] = w0
+        g[p + 2 + 2 * k] = w1
+        if (g[p] as i32) < k + 1 { g[p] = (k + 1) as u32 }
     }
 }
