@@ -1,7 +1,12 @@
-# One frame of the life world: the scene, tracers, organisms, effects and
-# the overlay, in the 2D view or the 3D view, into one of two frame
-# buffers (the other may still be on screen).
+# One frame of the life world: the scene, tracers, organisms and effects
+# in the 2D view or the 3D view, and the overlay in a transparent frame of
+# its own. Frames are double-buffered (the other may still be on screen).
+#
+# On a large panel the world can be drawn at half size (organisms) and a
+# quarter (water), and scaled up by the GPU on screen, while the overlay's
+# text is drawn at full size. The overlay is redrawn every few frames.
 
+import "stdlib/memory.flow"
 import gsim.config
 import glife.lconfig
 import glife.lworld
@@ -14,9 +19,40 @@ import .tracers
 import .hud
 import .view3d
 
+@cEmbed("#include <time.h>
+static double view_ms_c(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1000000.0;
+}")
+
+extern {
+    function view_ms_c() -> f64
+}
+
+struct Shown {
+    world: Frame,
+    hud: Frame,
+    hud_fresh: bool
+}
+
 struct View {
     a: Frame,
     b: Frame,
+    # the world at half size when half is set, and the water at a quarter
+    la: Frame,
+    lb: Frame,
+    q: Frame,
+    # the overlay, transparent
+    ha: Frame,
+    hb: Frame,
+    hud_flip: bool,
+    hud_every: i32,
+    frame_no: i32,
+    dl_lo: DrawList,
+    half: bool,
+    # with half: the scene (water, relief) at a quarter, scaled up twice
+    quarter: bool,
     flip: bool,
     w: i32,
     h: i32,
@@ -30,17 +66,26 @@ struct View {
     style: i32,
     flow_view: bool,
     view3d: bool,
-    clock: f32
+    clock: f32,
+    # milliseconds in each part of the last frame, when profiling:
+    # 0 fields, 1 scene, 2 tracers, 3 organisms, 4 effects, 5 scale-up,
+    # 6 overlay
+    profile: bool,
+    prof: ptr<f64>
 }
 
 export function view_new(w: i32, h: i32) -> View {
     let mut u: f32 = (h as f32) / 982.0
     if u < 1.0 { u = 1.0 }
     return View {
-        a: fb_new(w, h), b: fb_new(w, h), flip: false, w: w, h: h,
+        a: fb_new(w, h), b: fb_new(w, h), la: fb_new(w / 2, h / 2), lb: fb_new(w / 2, h / 2),
+        q: fb_new(w / 4, h / 4), ha: fb_new_alpha(w, h), hb: fb_new_alpha(w, h), hud_flip: false,
+        hud_every: 3, frame_no: 0,
+        dl_lo: drawlist_new(h / 2), half: false, quarter: false, flip: false, w: w, h: h,
         cam: cam_new(w, h), cam3: cam3_new(w, h), scene: scene_new(), dl: drawlist_new(h),
         tr: tracers_new(), v3: view3_new(w, h), hud: hud_new(u, h),
-        style: STYLE_NATURAL, flow_view: false, view3d: false, clock: 0.0
+        style: STYLE_NATURAL, flow_view: false, view3d: false, clock: 0.0,
+        profile: false, prof: alloc_zeroed(8 * 8) as ptr<f64>
     }
 }
 
@@ -73,37 +118,103 @@ export function view_tick(v: ptr<View>, l: ptr<Life>, ticks: i32) -> void {
     }
 }
 
-# Render a frame; returns it.
+# Render a frame: the world, and the overlay when it is due (or forced).
 export function view_render(v: ptr<View>, l: ptr<Life>, cs: ptr<Census>, preset: i32, steps: i32,
-                            paused: bool, selected: i32, fps: f32) -> Frame {
-    let mut f: Frame = v.a
-    if v.flip { f = v.b }
-    v.flip = !v.flip
+                            paused: bool, selected: i32, fps: f32, force_hud: bool) -> Shown {
+    let mut t: f64 = view_ms_c()
     scene_terrain(&v.scene, &l.env)
     scene_vorticity(&v.scene, &l.fluid)
+    t = vlap(v, 0, t)
     let mut sel_seed: u32 = 0 as u32
     if selected >= 0 { sel_seed = l.cr[selected].seed }
     let look: Look = Look { style: v.style, t: v.clock, day: l.daylight, selected: sel_seed }
-    if v.view3d {
-        view3_draw(&v.v3, f, &v.cam3, &v.scene, l, v.clock, v.flow_view, v.style)
-    } else {
-        scene_draw(f, &v.scene, &v.cam, l, v.clock, v.flow_view, v.style)
-        let ocean: bool = l.cfg.habitat == HAB_OCEAN
-        if l.cfg.flow > 0.0 and v.style != STYLE_BRIGHT {
-            let mut k: f32 = 0.35 + 0.65 * l.daylight
-            if v.flow_view { k = 1.0 }
-            if !ocean { k = 0.5 }
-            tracers_draw(f, &v.tr, &v.cam, l, k)
-        }
-        drawlist_build(&v.dl, l, &v.cam)
-        if ocean and v.style == STYLE_NATURAL {
-            bodies_glow(f, &v.dl, l, &v.cam, 1.0 - l.daylight)
-        }
-        bodies_draw(f, &v.dl, l, &v.cam, look)
-        effects_draw(f, &v.tr, &v.cam)
+    let mut world: Frame = v.a
+    if v.flip { world = v.b }
+    if v.half and !v.view3d {
+        world = v.la
+        if v.flip { world = v.lb }
     }
-    hud_draw(f, &v.hud, l, cs, preset, steps, paused, selected, look, v.view3d, v.flow_view, fps)
-    return f
+    v.flip = !v.flip
+    if v.view3d {
+        view3_draw(&v.v3, world, &v.cam3, &v.scene, l, v.clock, v.flow_view, v.style)
+    } elif v.half {
+        let mut cam: Camera = v.cam
+        cam.w = world.w
+        cam.h = world.h
+        cam.scale = cam.scale * 0.5
+        if v.quarter {
+            let mut qc: Camera = v.cam
+            qc.w = v.q.w
+            qc.h = v.q.h
+            qc.scale = qc.scale * 0.25
+            scene_draw(v.q, &v.scene, &qc, l, v.clock, v.flow_view, v.style)
+            fb_upscale2(v.q, world)
+            t = vlap(v, 1, t)
+            world_2d(v, world, &cam, &v.dl_lo, l, look, false)
+        } else {
+            world_2d(v, world, &cam, &v.dl_lo, l, look, true)
+        }
+    } else {
+        world_2d(v, world, &v.cam, &v.dl, l, look, true)
+    }
+    let mut hud: Frame = v.ha
+    if !v.hud_flip { hud = v.hb }
+    let fresh: bool = force_hud or v.frame_no % v.hud_every == 0
+    if fresh {
+        v.hud_flip = !v.hud_flip
+        hud = v.ha
+        if !v.hud_flip { hud = v.hb }
+        t = view_ms_c()
+        fb_clear(hud)
+        hud_draw(hud, &v.hud, l, cs, preset, steps, paused, selected, look, v.view3d, v.flow_view, fps)
+        t = vlap(v, 6, t)
+    }
+    v.frame_no = v.frame_no + 1
+    return Shown { world: world, hud: hud, hud_fresh: fresh }
+}
+
+# One opaque full-size picture of what view_render made, for stills.
+export function view_compose(v: ptr<View>, s: Shown) -> Frame {
+    let mut out: Frame = s.world
+    if s.world.w != v.w {
+        out = v.a
+        if s.world.px == v.a.px { out = v.b }
+        fb_upscale2(s.world, out)
+    }
+    fb_over(out, s.hud)
+    return out
+}
+
+# The world from above: scene, tracers, organisms, effects.
+function world_2d(v: ptr<View>, f: Frame, cam: ptr<Camera>, dl: ptr<DrawList>, l: ptr<Life>, look: Look,
+                  scene: bool) -> void {
+    let mut t: f64 = view_ms_c()
+    if scene { scene_draw(f, &v.scene, cam, l, v.clock, v.flow_view, v.style) }
+    t = vlap(v, 1, t)
+    let ocean: bool = l.cfg.habitat == HAB_OCEAN
+    if l.cfg.flow > 0.0 and v.style != STYLE_BRIGHT {
+        let mut k: f32 = 0.35 + 0.65 * l.daylight
+        if v.flow_view { k = 1.0 }
+        if !ocean { k = 0.5 }
+        tracers_draw(f, &v.tr, cam, l, k)
+    }
+    t = vlap(v, 2, t)
+    drawlist_build(dl, l, cam)
+    t = vlap(v, 7, t)
+    if ocean and v.style == STYLE_NATURAL {
+        bodies_glow(f, dl, l, cam, 1.0 - l.daylight)
+    }
+    t = vlap(v, 5, t)
+    bodies_draw(f, dl, l, cam, look)
+    t = vlap(v, 3, t)
+    effects_draw(f, &v.tr, cam)
+    t = vlap(v, 4, t)
+}
+
+function vlap(v: ptr<View>, k: i32, t0: f64) -> f64 {
+    let now: f64 = view_ms_c()
+    v.prof[k] = v.prof[k] + (now - t0)
+    return now
 }
 
 # The organism nearest a screen point, within reach, or -1.

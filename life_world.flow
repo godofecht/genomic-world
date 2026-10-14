@@ -98,6 +98,8 @@ function main() -> i32 {
     census_genomes(&cs, l.cr, l.genome, l.n)
     let mut v: View = view_new(w, h)
     view_reset(&v, &l)
+    v.half = w >= 2000
+    v.quarter = v.half
     let mut keys: Keys = Keys { held: [false, false, false, false] }
 
     let g: Gfx = gfx_open(1280, 800, "Life World")
@@ -113,10 +115,37 @@ function main() -> i32 {
     let mut dragged: bool = false
     let mut fps: f32 = 60.0
     let mut t_last: f64 = gfx_time_ms(g)
+    let mut size_seen: i32 = 0
 
     while !app.quit {
         gfx_poll(g)
         if gfx_should_close(g) { app.quit = true }
+
+        # Frames the size of the view, once it has settled (full screen
+        # leaves out the camera housing; a window can be resized).
+        let vs: Screen = disp_view_size()
+        if vs.w >= 320 and vs.h >= 240 and (vs.w != w or vs.h != h) {
+            size_seen = size_seen + 1
+            if size_seen > 8 {
+                w = vs.w - (vs.w & 1)
+                h = vs.h - (vs.h & 1)
+                let style: i32 = v.style
+                let v3: bool = v.view3d
+                let fvw: bool = v.flow_view
+                let show: bool = v.hud.show
+                v = view_new(w, h)
+                view_reset(&v, &l)
+                v.style = style
+                v.view3d = v3
+                v.flow_view = fvw
+                v.hud.show = show
+                v.half = w >= 2000
+                v.quarter = v.half
+                size_seen = 0
+            }
+        } else {
+            size_seen = 0
+        }
 
         # Keys.
         if tap(g, &keys, KEY_Q) { app.quit = true }
@@ -167,6 +196,21 @@ function main() -> i32 {
             if tap(g, &keys, KEY_H) { v.hud.help = !v.hud.help }
             if tap(g, &keys, KEY_I) { v.hud.show = !v.hud.show }
             if tap(g, &keys, KEY_F) { v.flow_view = !v.flow_view }
+            if tap(g, &keys, KEY_G) {
+                # Quality: fast (water at a quarter, organisms at half),
+                # balanced (both at half), full.
+                if v.half and v.quarter {
+                    v.quarter = false
+                    hud_toast(&v.hud, "Balanced: the world at half resolution")
+                } elif v.half {
+                    v.half = false
+                    hud_toast(&v.hud, "Full resolution")
+                } else {
+                    v.half = true
+                    v.quarter = true
+                    hud_toast(&v.hud, "Fast: water at a quarter, organisms at half")
+                }
+            }
             if tap(g, &keys, KEY_V) {
                 v.style = (v.style + 1) % 3
                 if v.style == STYLE_NATURAL { hud_toast(&v.hud, "Natural colour") }
@@ -263,6 +307,7 @@ function main() -> i32 {
         down_r = p.right
 
         # Simulate.
+        let t_sim: f64 = gfx_time_ms(g)
         if !app.paused and l.n > 0 and !v.hud.menu {
             for k in 0 to app.steps {
                 life_step(&l)
@@ -276,8 +321,13 @@ function main() -> i32 {
         if sel < 0 { app.selected = 0 as u32 }
         view_follow(&v, &l, sel)
 
-        let f: Frame = view_render(&v, &l, &cs, app.preset, app.steps, app.paused, sel, fps)
-        disp_present(f.px, w, h)
+        let t_draw: f64 = gfx_time_ms(g)
+        v.hud.sim_ms = v.hud.sim_ms + 0.1 * (((t_draw - t_sim) as f32) - v.hud.sim_ms)
+        let shown: Shown = view_render(&v, &l, &cs, app.preset, app.steps, app.paused, sel, fps,
+                                       v.hud.menu or v.hud.help)
+        disp_present2(shown.world.px, shown.world.w, shown.world.h, shown.hud.px, shown.hud.w, shown.hud.h,
+                      shown.hud_fresh)
+        v.hud.draw_ms = v.hud.draw_ms + 0.1 * (((gfx_time_ms(g) - t_draw) as f32) - v.hud.draw_ms)
         gfx_wait_frame(g, 60)
         let now: f64 = gfx_time_ms(g)
         let dt: f64 = now - t_last

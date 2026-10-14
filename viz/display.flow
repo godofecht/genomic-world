@@ -10,6 +10,10 @@
 #                   window resizable and able to go full screen
 #   disp_present    shows an RGBX frame of any size in that layer, scaled
 #                   to fit the window, letterboxed; no copy on our side
+#   disp_present2   the same, with a second, transparent frame (the
+#                   overlay) in a layer above it; the two may differ in
+#                   size, so the world can be drawn at half resolution and
+#                   scaled by the GPU while the text stays sharp
 #   disp_fullscreen toggles macOS full screen
 #   disp_mouse      pointer position in frame pixels, and buttons
 #
@@ -25,6 +29,7 @@
 static id disp_win_ = 0;
 static id disp_view_ = 0;
 static id disp_layer_ = 0;
+static id disp_hud_ = 0;
 static CGColorSpaceRef disp_cs_ = 0;
 
 static SEL disp_sel(const char* n) { return sel_registerName(n); }
@@ -68,6 +73,14 @@ static int32_t disp_attach_c(void) {
     disp_m1(layer, \"setMinificationFilter:\", (id)CFSTR(\"linear\"));
     disp_m1(root, \"addSublayer:\", layer);
     disp_layer_ = layer;
+    id hud = disp_m0(disp_cls(\"CALayer\"), \"layer\");
+    disp_m0(hud, \"retain\");
+    ((void (*)(id, SEL, CGRect))objc_msgSend)(hud, disp_sel(\"setFrame:\"), disp_rect(disp_view_, \"bounds\"));
+    ((void (*)(id, SEL, unsigned int))objc_msgSend)(hud, disp_sel(\"setAutoresizingMask:\"), 2u | 16u);
+    disp_m1(hud, \"setContentsGravity:\", (id)CFSTR(\"resizeAspect\"));
+    disp_mb(hud, \"setOpaque:\", NO);
+    disp_m1(root, \"addSublayer:\", hud);
+    disp_hud_ = hud;
     /* NSWindowCollectionBehaviorFullScreenPrimary, NSWindowStyleMaskResizable */
     disp_setu(disp_win_, \"setCollectionBehavior:\", 1ul << 7);
     disp_setu(disp_win_, \"setStyleMask:\", disp_mu(disp_win_, \"styleMask\") | 8ul);
@@ -91,6 +104,35 @@ static void disp_present_c(uint32_t* px, int32_t w, int32_t h) {
     CGDataProviderRelease(dp);
 }
 
+static CGImageRef disp_image(uint32_t* px, int32_t w, int32_t h, int alpha) {
+    if (!disp_cs_) disp_cs_ = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    CGDataProviderRef dp = CGDataProviderCreateWithData(NULL, px, (size_t)w * (size_t)h * 4u, NULL);
+    CGBitmapInfo info = kCGBitmapByteOrderDefault |
+        (alpha ? kCGImageAlphaPremultipliedLast : kCGImageAlphaNoneSkipLast);
+    CGImageRef img = CGImageCreate((size_t)w, (size_t)h, 8, 32, (size_t)w * 4u, disp_cs_, info,
+                                   dp, NULL, false, kCGRenderingIntentDefault);
+    CGDataProviderRelease(dp);
+    return img;
+}
+
+/* The world, and the overlay when fresh (otherwise the last one stays). */
+static void disp_present2_c(uint32_t* px, int32_t w, int32_t h, uint32_t* hp, int32_t hw, int32_t hh,
+                            int32_t fresh) {
+    if (!disp_attach_c()) return;
+    CGImageRef img = disp_image(px, w, h, 0);
+    CGImageRef himg = 0;
+    if (fresh) himg = disp_image(hp, hw, hh, 1);
+    id cat = disp_cls(\"CATransaction\");
+    disp_m0(cat, \"begin\");
+    disp_mb(cat, \"setDisableActions:\", YES);
+    disp_m1(disp_layer_, \"setContents:\", (id)img);
+    if (himg) disp_m1(disp_hud_, \"setContents:\", (id)himg);
+    disp_m0(cat, \"commit\");
+    disp_m0(cat, \"flush\");
+    CGImageRelease(img);
+    if (himg) CGImageRelease(himg);
+}
+
 static void disp_fullscreen_c(void) {
     if (!disp_attach_c()) return;
     disp_m1(disp_win_, \"toggleFullScreen:\", (id)0);
@@ -99,6 +141,18 @@ static void disp_fullscreen_c(void) {
 static int32_t disp_is_fullscreen_c(void) {
     if (!disp_attach_c()) return 0;
     return (disp_mu(disp_win_, \"styleMask\") & (1ul << 14)) ? 1 : 0;
+}
+
+/* The content view's size in device pixels: what a frame should be to fill
+ * it exactly (in full screen it excludes the camera housing). */
+static int32_t disp_view_px_c(int32_t* out) {
+    out[0] = 0; out[1] = 0;
+    if (!disp_attach_c()) return 0;
+    CGRect b = disp_rect(disp_view_, \"bounds\");
+    double s = ((double (*)(id, SEL))objc_msgSend)(disp_win_, disp_sel(\"backingScaleFactor\"));
+    out[0] = (int32_t)(b.size.width * s + 0.5);
+    out[1] = (int32_t)(b.size.height * s + 0.5);
+    return 1;
 }
 
 /* out: x, y in frame pixels (row 0 at the top), left, right, window is key,
@@ -133,6 +187,8 @@ extern {
     function disp_fullscreen_c() -> void
     function disp_is_fullscreen_c() -> i32
     function disp_mouse_c(out: ptr<i32>, bw: i32, bh: i32) -> void
+    function disp_view_px_c(out: ptr<i32>) -> i32
+    function disp_present2_c(px: ptr<u32>, w: i32, h: i32, hp: ptr<u32>, hw: i32, hh: i32, fresh: i32) -> void
 }
 
 struct Screen {
@@ -156,12 +212,25 @@ export function disp_screen() -> Screen {
     return Screen { w: o[0], h: o[1], scale: (o[2] as f32) / 100.0 }
 }
 
+# The window's content in device pixels; (0, 0) before it exists.
+export function disp_view_size() -> Screen {
+    let o: array<i32, 2> = [0, 0]
+    let ok: i32 = disp_view_px_c(o)
+    return Screen { w: o[0], h: o[1], scale: 1.0 }
+}
+
 export function disp_attach() -> bool {
     return disp_attach_c() == 1
 }
 
 export function disp_present(px: ptr<u32>, w: i32, h: i32) -> void {
     disp_present_c(px, w, h)
+}
+
+export function disp_present2(px: ptr<u32>, w: i32, h: i32, hp: ptr<u32>, hw: i32, hh: i32, fresh: bool) -> void {
+    let mut f: i32 = 0
+    if fresh { f = 1 }
+    disp_present2_c(px, w, h, hp, hw, hh, f)
 }
 
 export function disp_fullscreen() -> void {

@@ -6,6 +6,10 @@
 # Every Frame carries a clip band of rows [y0, y1). Drawing in parallel
 # gives each thread its own band of the same buffer, so no two threads
 # write the same pixel and the image does not depend on thread count.
+#
+# An alpha frame (the overlay) is transparent where nothing is drawn and
+# holds premultiplied RGBA; drawing composites over what is there. Other
+# frames are opaque and the fourth byte is ignored.
 
 import "stdlib/memory.flow"
 
@@ -40,12 +44,51 @@ struct Frame {
     h: i32,
     px: ptr<u32>,
     y0: i32,
-    y1: i32
+    y1: i32,
+    alpha: bool
 }
 
 export function fb_new(w: i32, h: i32) -> Frame {
     let px: ptr<u32> = alloc_zeroed((w as i64) * (h as i64) * 4) as ptr<u32>
-    return Frame { w: w, h: h, px: px, y0: 0, y1: h }
+    return Frame { w: w, h: h, px: px, y0: 0, y1: h, alpha: false }
+}
+
+export function fb_new_alpha(w: i32, h: i32) -> Frame {
+    let px: ptr<u32> = alloc_zeroed((w as i64) * (h as i64) * 4) as ptr<u32>
+    return Frame { w: w, h: h, px: px, y0: 0, y1: h, alpha: true }
+}
+
+# Make every pixel transparent.
+export function fb_clear(f: Frame) -> void {
+    let px: ptr<u32> = f.px
+    let w: i32 = f.w
+    parallel for y in 0 to f.h {
+        for x in 0 to w {
+            px[y * w + x] = 0 as u32
+        }
+    }
+}
+
+# Composite the alpha frame `top` over the opaque frame `f` (same size).
+export function fb_over(f: Frame, top: Frame) -> void {
+    let px: ptr<u32> = f.px
+    let tp: ptr<u32> = top.px
+    let w: i32 = f.w
+    parallel for y in 0 to min_i(f.h, top.h) {
+        for x in 0 to min_i(w, top.w) {
+            let o: i32 = y * w + x
+            let t: u32 = tp[y * top.w + x]
+            let a: i32 = ((t >> (24 as u32)) & (255 as u32)) as i32
+            if a > 0 {
+                let p: u32 = px[o]
+                let k: i32 = 255 - a
+                let r: i32 = ((t & (255 as u32)) as i32) + ((((p & (255 as u32)) as i32) * k) / 255)
+                let g: i32 = (((t >> (8 as u32)) & (255 as u32)) as i32) + ((((p >> (8 as u32)) & (255 as u32)) as i32) * k) / 255
+                let b: i32 = (((t >> (16 as u32)) & (255 as u32)) as i32) + ((((p >> (16 as u32)) & (255 as u32)) as i32) * k) / 255
+                px[o] = pack(clamp255(r), clamp255(g), clamp255(b))
+            }
+        }
+    }
 }
 
 # The same buffer clipped to rows [a, b).
@@ -54,7 +97,7 @@ export function fb_band(f: Frame, a: i32, b: i32) -> Frame {
     let mut hi: i32 = b
     if lo < 0 { lo = 0 }
     if hi > f.h { hi = f.h }
-    return Frame { w: f.w, h: f.h, px: f.px, y0: lo, y1: hi }
+    return Frame { w: f.w, h: f.h, px: f.px, y0: lo, y1: hi, alpha: f.alpha }
 }
 
 export function rgb_of(r: i32, g: i32, b: i32) -> i32 {
@@ -67,17 +110,29 @@ export function clamp255(v: i32) -> i32 {
     return v
 }
 
+# An opaque pixel.
 export function pack(r: i32, g: i32, b: i32) -> u32 {
-    return (r as u32) | ((g as u32) << (8 as u32)) | ((b as u32) << (16 as u32))
+    return (r as u32) | ((g as u32) << (8 as u32)) | ((b as u32) << (16 as u32)) | (0xff000000 as u32)
 }
 
 export function pack_rgb(rgb: i32) -> u32 {
     return pack((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255)
 }
 
-# Mix colour rgb into pixel o with weight a / 256.
+# Mix colour rgb into pixel o with weight a / 256. On an alpha frame,
+# composite over: premultiplied colour and alpha both.
 export function fb_mix(f: Frame, o: i32, rgb: i32, a: i32) -> void {
     let p: u32 = f.px[o]
+    if f.alpha {
+        let k: i32 = 256 - a
+        let r: i32 = ((((rgb >> 16) & 255) * a) >> 8) + ((((p & (255 as u32)) as i32) * k) >> 8)
+        let g: i32 = ((((rgb >> 8) & 255) * a) >> 8) + ((((p >> (8 as u32)) & (255 as u32)) as i32) * k >> 8)
+        let b: i32 = (((rgb & 255) * a) >> 8) + ((((p >> (16 as u32)) & (255 as u32)) as i32) * k >> 8)
+        let al: i32 = ((255 * a) >> 8) + ((((p >> (24 as u32)) & (255 as u32)) as i32) * k >> 8)
+        f.px[o] = (clamp255(r) as u32) | ((clamp255(g) as u32) << (8 as u32)) | ((clamp255(b) as u32) << (16 as u32))
+                | ((clamp255(al) as u32) << (24 as u32))
+        return
+    }
     let pr: i32 = (p & (255 as u32)) as i32
     let pg: i32 = ((p >> (8 as u32)) & (255 as u32)) as i32
     let pb: i32 = ((p >> (16 as u32)) & (255 as u32)) as i32
@@ -129,7 +184,7 @@ export function fb_rect(f: Frame, x: i32, y: i32, w: i32, h: i32, rgb: i32, a: i
         }
         return
     }
-    for yy in ya to yb {
+    parallel for yy in ya to yb {
         for xx in xa to xb {
             fb_mix(f, yy * f.w + xx, rgb, a)
         }
@@ -159,7 +214,7 @@ export function fb_panel(f: Frame, x: i32, y: i32, w: i32, h: i32, rad: f32, rgb
     let hy: f32 = 0.5 * (h as f32)
     let cx: f32 = (x as f32) + hx
     let cy: f32 = (y as f32) + hy
-    for yy in ya to yb {
+    parallel for yy in ya to yb {
         let py: f32 = abs_f((yy as f32) + 0.5 - cy) - (hy - rad)
         for xx in xa to xb {
             let px: f32 = abs_f((xx as f32) + 0.5 - cx) - (hx - rad)
@@ -390,6 +445,55 @@ export function max_i(a: i32, b: i32) -> i32 {
 export function min_i(a: i32, b: i32) -> i32 {
     if a < b { return a }
     return b
+}
+
+# Scale src up by two into dst (dst is twice src's size), bilinear.
+export function fb_upscale2(src: Frame, dst: Frame) -> void {
+    let lp: ptr<u32> = src.px
+    let px: ptr<u32> = dst.px
+    let lw: i32 = src.w
+    let lh: i32 = src.h
+    let fw: i32 = dst.w
+    let fh: i32 = min_i(dst.h, lh * 2)
+    parallel for y in 0 to fh {
+        let fy: f32 = ((y as f32) + 0.5) * 0.5 - 0.5
+        let mut y0: i32 = floorf(fy) as i32
+        let ty: f32 = fy - (y0 as f32)
+        if y0 < 0 { y0 = 0 }
+        if y0 >= lh { y0 = lh - 1 }
+        let mut y1: i32 = y0 + 1
+        if y1 >= lh { y1 = lh - 1 }
+        let wy1: i32 = (ty * 256.0) as i32
+        let wy0: i32 = 256 - wy1
+        for x in 0 to min_i(fw, lw * 2) {
+            let fx: f32 = ((x as f32) + 0.5) * 0.5 - 0.5
+            let mut x0: i32 = floorf(fx) as i32
+            let tx: f32 = fx - (x0 as f32)
+            if x0 < 0 { x0 = 0 }
+            if x0 >= lw { x0 = lw - 1 }
+            let mut x1: i32 = x0 + 1
+            if x1 >= lw { x1 = lw - 1 }
+            let wx1: i32 = (tx * 256.0) as i32
+            let wx0: i32 = 256 - wx1
+            let a: u32 = lp[y0 * lw + x0]
+            let b: u32 = lp[y0 * lw + x1]
+            let c: u32 = lp[y1 * lw + x0]
+            let d: u32 = lp[y1 * lw + x1]
+            let mut out: u32 = 0 as u32
+            for ch in 0 to 3 {
+                let sh: u32 = (ch * 8) as u32
+                let va: i32 = ((a >> sh) & (255 as u32)) as i32
+                let vb: i32 = ((b >> sh) & (255 as u32)) as i32
+                let vc: i32 = ((c >> sh) & (255 as u32)) as i32
+                let vd: i32 = ((d >> sh) & (255 as u32)) as i32
+                let top: i32 = va * wx0 + vb * wx1
+                let bot: i32 = vc * wx0 + vd * wx1
+                let val: i32 = (top * wy0 + bot * wy1) >> 16
+                out = out | ((val as u32) << sh)
+            }
+            px[y * fw + x] = out
+        }
+    }
 }
 
 # Binary PPM, for headless checks and stills.

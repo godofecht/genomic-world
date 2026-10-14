@@ -246,7 +246,7 @@ function draw_cells(f: Frame, l: ptr<Life>, i: i32, sx: f32, sy: f32, s: f32, lo
     let co: f32 = cosf(c.hd)
     let si: f32 = sinf(c.hd)
     let combined: bool = l.cfg.mode == MODE_COMBINED
-    let mut m: Morph = morph_decode(l.genome, i * L_WORDS)
+    let m: Morph = l.looks[i]
     let mut base: i32 = (c.col & (0xffffff as u32)) as i32
     if combined { base = pigment(m) }
     let dark: bool = look.style == STYLE_DARK
@@ -254,8 +254,8 @@ function draw_cells(f: Frame, l: ptr<Life>, i: i32, sx: f32, sy: f32, s: f32, lo
     let alpha: i32 = 255
     let r_cell: f32 = 0.5 * s
 
-    # Tiny: one disc per cell.
-    if s < 2.6 {
+    # Small on screen: one disc per cell.
+    if s < 4.5 {
         for k in 0 to n {
             let cc: u32 = cells[off + k]
             let bx: f32 = cell_x(cc) as f32
@@ -264,7 +264,7 @@ function draw_cells(f: Frame, l: ptr<Life>, i: i32, sx: f32, sy: f32, s: f32, lo
             let y: f32 = sy + s * (si * bx + co * by)
             let mut col: i32 = type_rgb(cell_type(cc), c.col)
             if combined and cell_type(cc) == CELL_CORE { col = base }
-            fb_disc(f, x, y, max_f(0.7, r_cell * 1.1), col, alpha)
+            fb_disc(f, x, y, max_f(0.7, r_cell * 1.15), col, alpha)
         }
         return
     }
@@ -394,7 +394,7 @@ function cell_detail(f: Frame, t: i32, x: f32, y: f32, rr: f32, bx: f32, by: f32
 # One unicellular organism (morph mode), drawn from its genes.
 function draw_morph(f: Frame, l: ptr<Life>, i: i32, sx: f32, sy: f32, s: f32, look: Look) -> void {
     let c: Creature = l.cr[i]
-    let m: Morph = morph_decode(l.genome, i * L_WORDS)
+    let m: Morph = l.looks[i]
     let r: f32 = 0.5 + 2.0 * m.size
     let aspect: f32 = 1.0 + 2.5 * m.elong
     let sa: f32 = sqrtf(aspect)
@@ -586,6 +586,9 @@ export function bodies_glow(f: Frame, dl: ptr<DrawList>, l: ptr<Life>, cam: ptr<
     if k <= 0.02 { return }
     let a: i32 = (k * 70.0) as i32
     let mode: i32 = l.cfg.mode
+    # Zoomed out, a small halo is enough and much cheaper.
+    let small: bool = cam.scale < 6.0
+    let s: f32 = cam.scale
     parallel for b in 0 to dl.bands {
         let fb: Frame = fb_band(f, b * BAND, (b + 1) * BAND)
         for q in dl.band_start[b] to dl.band_start[b + 1] {
@@ -593,10 +596,14 @@ export function bodies_glow(f: Frame, dl: ptr<DrawList>, l: ptr<Life>, cam: ptr<
             let i: i32 = dl.idx[e]
             let mut col: i32 = (l.cr[i].col & (0xffffff as u32)) as i32
             if mode != MODE_PLAN {
-                col = pigment(morph_decode(l.genome, i * L_WORDS))
+                col = pigment(l.looks[i])
             }
             if l.cr[i].attack > 0.0 { col = 0xff50c8 }
-            fb_glow(fb, dl.sx[e], dl.sy[e], dl.rad[e] * 1.1, col, a)
+            if small {
+                fb_disc(fb, dl.sx[e], dl.sy[e], s * (l.cr[i].radius + 1.0), col, a / 2)
+            } else {
+                fb_glow(fb, dl.sx[e], dl.sy[e], dl.rad[e] * 0.6, col, a)
+            }
         }
     }
 }

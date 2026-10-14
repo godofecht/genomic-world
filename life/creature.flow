@@ -103,6 +103,9 @@ struct Morph {
     raptor: f32
 }
 
+# 21 four-byte fields: MORPH_BYTES must match.
+const MORPH_BYTES: i64 = 84
+
 export function morph_decode(g: ptr<u32>, gb: i32) -> Morph {
     return Morph {
         size: l_frac(g, gb, M_SIZE, 8),
@@ -184,11 +187,13 @@ export function dev_rounds(g: ptr<u32>, gb: i32) -> i32 {
 }
 
 # Express slot i: decode the brain, build the body into cells[off..], set
-# the record's phenotype. Returns the number of body cells.
-export function express(c: ptr<Creature>, g: ptr<u32>, brain: ptr<f32>, i: i32,
+# the record's phenotype, and keep the decoded morphology in looks[i] for
+# the viewer. Returns the number of body cells.
+export function express(c: ptr<Creature>, g: ptr<u32>, brain: ptr<f32>, looks: ptr<Morph>, i: i32,
                         mode: i32, dims: i32, x: ptr<Expr>, cells: ptr<u32>, off: i32) -> i32 {
     let gb: i32 = i * L_WORDS
     let m: Morph = morph_decode(g, gb)
+    looks[i] = m
     let mut n: i32 = 1
     if mode == MODE_MORPH {
         cells[off] = cell_pack(0, 0, 0, CELL_CORE, 8, 0)

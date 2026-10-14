@@ -21,7 +21,7 @@ extern {
     function sqrtf(x: f32) -> f32
 }
 
-const TRACERS: i32 = 30000
+const TRACERS: i32 = 16000
 const FX_MAX: i32 = 4096
 const FX_LIFE: f32 = 40.0
 

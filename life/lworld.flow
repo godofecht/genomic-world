@@ -142,9 +142,11 @@ struct Life {
     cr: ptr<Creature>,
     genome: ptr<u32>,
     brain: ptr<f32>,
+    looks: ptr<Morph>,
     cr2: ptr<Creature>,
     genome2: ptr<u32>,
     brain2: ptr<f32>,
+    looks2: ptr<Morph>,
 
     # body cells: an arena, double-buffered for compaction
     cells: ptr<u32>,
@@ -224,9 +226,11 @@ export function life_new(seed: u32, cfg: LifeCfg) -> Life {
         cr: alloc_bytes(m * CR_BYTES) as ptr<Creature>,
         genome: alloc_zeroed(m * 4 * (L_WORDS as i64)) as ptr<u32>,
         brain: alloc_f32(m * (BRAIN_W as i64)),
+        looks: alloc_bytes(m * MORPH_BYTES) as ptr<Morph>,
         cr2: alloc_bytes(m * CR_BYTES) as ptr<Creature>,
         genome2: alloc_zeroed(m * 4 * (L_WORDS as i64)) as ptr<u32>,
         brain2: alloc_f32(m * (BRAIN_W as i64)),
+        looks2: alloc_bytes(m * MORPH_BYTES) as ptr<Morph>,
         cells: alloc_zeroed(cap * 4) as ptr<u32>,
         cells2: alloc_zeroed(cap * 4) as ptr<u32>,
         cell_cap: cap,
@@ -302,7 +306,7 @@ export function life_cells_room(l: ptr<Life>, need: i32) -> void {
 # Develop slot i into the arena and set its phenotype.
 export function life_express(l: ptr<Life>, i: i32) -> void {
     life_cells_room(l, DEV_LIST)
-    let n: i32 = express(l.cr, l.genome, l.brain, i, l.cfg.mode, l.cfg.dims, &l.expr,
+    let n: i32 = express(l.cr, l.genome, l.brain, l.looks, i, l.cfg.mode, l.cfg.dims, &l.expr,
                          l.cells, l.cell_used)
     l.cell_used = l.cell_used + n
     # Resistance to toxin has a running cost in every mode.
@@ -913,6 +917,8 @@ export function life_compact(l: ptr<Life>, total: i32) -> void {
     let g2: ptr<u32> = l.genome2
     let br: ptr<f32> = l.brain
     let br2: ptr<f32> = l.brain2
+    let lk: ptr<Morph> = l.looks
+    let lk2: ptr<Morph> = l.looks2
     let cells: ptr<u32> = l.cells
     let cells2: ptr<u32> = l.cells2
     let newoff: ptr<i32> = l.fill
@@ -936,6 +942,7 @@ export function life_compact(l: ptr<Life>, total: i32) -> void {
                 for k in 0 to words { g2[pd + k] = g[ps + k] }
             }
             for k in 0 to BRAIN_W { br2[d * BRAIN_W + k] = br[i * BRAIN_W + k] }
+            lk2[d] = lk[i]
         }
     }
     l.cr = cr2
@@ -944,6 +951,8 @@ export function life_compact(l: ptr<Life>, total: i32) -> void {
     l.genome2 = g
     l.brain = br2
     l.brain2 = br
+    l.looks = lk2
+    l.looks2 = lk
     l.cells = cells2
     l.cells2 = cells
     l.cell_used = used

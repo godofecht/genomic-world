@@ -1,5 +1,6 @@
-# Typography: anti-aliased system-font text drawn into an RGBX frame
-# through CoreText. Three faces: the system font, its bold weight, and the
+# Typography: anti-aliased system-font text drawn through CoreText into an
+# RGBX frame, or into an RGBA frame with premultiplied alpha when
+# `transparent` is set. Three faces: the system font, its bold weight, and the
 # system monospaced font for numbers that change every frame.
 #
 # A bitmap context over the frame is made once per frame buffer and reused;
@@ -19,7 +20,7 @@ static CTFontRef typo_font_[TYPO_FONTS];
 static int typo_key_[TYPO_FONTS];
 static CGColorSpaceRef typo_cs_ = 0;
 
-static CGContextRef typo_ctx(void* buf, int w, int h) {
+static CGContextRef typo_ctx(void* buf, int w, int h, int alpha) {
     if (!typo_cs_) typo_cs_ = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
     int free_slot = -1;
     for (int k = 0; k < TYPO_CTX; k++) {
@@ -31,7 +32,8 @@ static CGContextRef typo_ctx(void* buf, int w, int h) {
         CGContextRelease(typo_ctx_[0]);
     }
     CGContextRef c = CGBitmapContextCreate(buf, (size_t)w, (size_t)h, 8, (size_t)w * 4u, typo_cs_,
-                                           kCGBitmapByteOrderDefault | kCGImageAlphaNoneSkipLast);
+                                           kCGBitmapByteOrderDefault |
+                                           (alpha ? kCGImageAlphaPremultipliedLast : kCGImageAlphaNoneSkipLast));
     CGContextSetShouldSmoothFonts(c, false);
     CGContextSetShouldAntialias(c, true);
     CGContextSetTextMatrix(c, CGAffineTransformIdentity);
@@ -63,7 +65,7 @@ static CTFontRef typo_font(int face, int size) {
 /* Draw (or with draw == 0 only measure) a line. Returns its advance width
  * in pixels. rgb is 0xRRGGBB; alpha is 0..255. */
 static int32_t typo_line(uint32_t* buf, int32_t w, int32_t h, int32_t x, int32_t y, const char* s,
-                         int32_t face, int32_t size, int32_t rgb, int32_t alpha, int32_t draw) {
+                         int32_t face, int32_t size, int32_t rgb, int32_t alpha, int32_t draw, int32_t transparent) {
     if (!s || !s[0] || size <= 0) return 0;
     CTFontRef font = typo_font(face, size);
     CFStringRef str = CFStringCreateWithCString(NULL, s, kCFStringEncodingUTF8);
@@ -81,7 +83,7 @@ static int32_t typo_line(uint32_t* buf, int32_t w, int32_t h, int32_t x, int32_t
     CGFloat ascent = 0, descent = 0, leading = 0;
     double adv = CTLineGetTypographicBounds(line, &ascent, &descent, &leading);
     if (draw) {
-        CGContextRef c = typo_ctx(buf, w, h);
+        CGContextRef c = typo_ctx(buf, w, h, transparent);
         CGContextSetTextPosition(c, (CGFloat)x, (CGFloat)h - (CGFloat)y - ascent);
         CTLineDraw(line, c);
     }
@@ -119,7 +121,7 @@ static const char* typo_fmt_c(double v, int32_t dec, const char* prefix, const c
 
 extern {
     function typo_line(buf: ptr<u32>, w: i32, h: i32, x: i32, y: i32, s: string,
-                       face: i32, size: i32, rgb: i32, alpha: i32, draw: i32) -> i32
+                       face: i32, size: i32, rgb: i32, alpha: i32, draw: i32, transparent: i32) -> i32
     function typo_fmt_c(v: f64, dec: i32, prefix: string, suffix: string) -> string
 }
 

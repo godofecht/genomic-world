@@ -365,7 +365,7 @@ function gather(v: ptr<View3>, c: ptr<Cam3>, l: ptr<Life>) -> void {
         let dy: f32 = y - c.ey
         if dx * c.fx + dy * c.fy > -10.0 {
             if mode == MODE_MORPH {
-                let m: Morph = morph_decode(l.genome, i * L_WORDS)
+                let m: Morph = l.looks[i]
                 let r: f32 = 0.5 + 2.0 * m.size
                 let aspect: f32 = 1.0 + 2.5 * m.elong
                 let sa: f32 = sqrtf(aspect)
@@ -399,7 +399,7 @@ function gather(v: ptr<View3>, c: ptr<Cam3>, l: ptr<Life>) -> void {
                 }
             } else {
                 let mut base: i32 = (cr.col & (0xffffff as u32)) as i32
-                let mut mm: Morph = morph_decode(l.genome, i * L_WORDS)
+                let mm: Morph = l.looks[i]
                 if mode == MODE_COMBINED { base = pigment(mm) }
                 for k in 0 to cr.bn {
                     let cc: u32 = cells[cr.boff + k]

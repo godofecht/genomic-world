@@ -12,6 +12,8 @@
 #   GW_FOLLOW  1: select an organism, show the inspector, follow it
 #   GW_FRAMES  frames to write, default 1; GW_STEP ticks between them
 #   GW_HUD     0 hides the overlay
+#   GW_HALF    1 draws the world at half size and scales it up; 2 also
+#              shades the water at a quarter
 #   GW_ORBIT   3D view: radians the camera turns per frame
 #   GW_PITCH   3D view: camera elevation in radians
 #   GW_OUT     path prefix, default out/shot; frames are PREFIX_0000.ppm
@@ -30,6 +32,12 @@ import gviz.view
 import gviz.view3d
 
 @cEmbed("#include <stdio.h>
+#include <time.h>
+static double shot_ms_c(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1000000.0;
+}
 static void shot_name_c(uint8_t* buf, const char* prefix, int32_t k) {
     snprintf((char*)buf, 512, \"%s_%04d.ppm\", prefix, k);
 }")
@@ -39,6 +47,7 @@ extern {
     function atoi(s: ptr<u8>) -> i32
     function atof(s: ptr<u8>) -> f64
     function shot_name_c(buf: ptr<u8>, prefix: string, k: i32) -> void
+    function shot_ms_c() -> f64
 }
 
 function env_i(name: string, dflt: i32) -> i32 {
@@ -86,6 +95,9 @@ function main() -> i32 {
     v.view3d = env_i("GW_VIEW", 2) == 3
     v.style = env_i("GW_STYLE", v.style)
     v.hud.show = env_i("GW_HUD", 1) == 1
+    v.half = env_i("GW_HALF", 0) >= 1
+    v.quarter = env_i("GW_HALF", 0) == 2
+    let mut render_ms: f64 = 0.0
     let orbit: f32 = env_f("GW_ORBIT", 0.0)
     v.cam3.pitch = env_f("GW_PITCH", v.cam3.pitch)
     let zoom: f32 = env_f("GW_ZOOM", 1.0)
@@ -125,7 +137,10 @@ function main() -> i32 {
         }
         view_tick(&v, &l, gap)
         v.cam3.yaw = v.cam3.yaw + orbit
-        let f: Frame = view_render(&v, &l, &cs, preset, gap, false, sel, 60.0)
+        let t0: f64 = shot_ms_c()
+        let shown: Shown = view_render(&v, &l, &cs, preset, gap, false, sel, 60.0, true)
+        let f: Frame = view_compose(&v, shown)
+        render_ms = render_ms + (shot_ms_c() - t0)
         shot_name_c(name, prefix, k)
         if !fb_save_ppm(f, name as string) {
             printf("could not write %s\n", name as string)
@@ -135,6 +150,11 @@ function main() -> i32 {
             step_census(&l, &cs)
         }
     }
-    printf("wrote %d frames, %d organisms at tick %u\n", frames, l.n, l.tick)
+    let fr: f64 = frames as f64
+    printf("ms per frame: fields %.1f  scene %.1f  tracers %.1f  draw list %.1f  glow %.1f  organisms %.1f  effects %.1f  overlay %.1f\n",
+           v.prof[0] / fr, v.prof[1] / fr, v.prof[2] / fr, v.prof[7] / fr, v.prof[5] / fr, v.prof[3] / fr,
+           v.prof[4] / fr, v.prof[6] / fr)
+    printf("wrote %d frames, %d organisms at tick %u, %.1f ms per frame to render\n", frames, l.n, l.tick,
+           render_ms / (frames as f64))
     return 0
 }

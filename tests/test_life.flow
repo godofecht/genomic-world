@@ -65,11 +65,12 @@ function main() -> i32 {
     let g: ptr<u32> = alloc_zeroed((n * L_WORDS * 4) as i64) as ptr<u32>
     let brain: ptr<f32> = alloc_f32((n * BRAIN_W) as i64)
     let cr: ptr<Creature> = alloc_bytes((n as i64) * CR_BYTES) as ptr<Creature>
+    let looks: ptr<Morph> = alloc_bytes((n as i64) * MORPH_BYTES) as ptr<Morph>
     let cells: ptr<u32> = alloc_zeroed(4 * 200000) as ptr<u32>
     let mut x: Expr = expr_new()
 
     luca(g, 0, &st)
-    let nb: i32 = express(cr, g, brain, 0, MODE_PLAN, 2, &x, cells, 0)
+    let nb: i32 = express(cr, g, brain, looks, 0, MODE_PLAN, 2, &x, cells, 0)
     let mut mouth_ok: bool = false
     let mut core_ok: bool = false
     let mut motor_ok: bool = false
@@ -106,7 +107,7 @@ function main() -> i32 {
         let k: i32 = 1 + rng_below(&st, 12)
         random_prog(g, L_WORDS, 0, k, &st)
         random_prog(g, L_WORDS, 1, 1 + rng_below(&st, 12), &st)
-        let nb1: i32 = express(cr, g, brain, 1, MODE_PLAN, dims, &x, cells, 0)
+        let nb1: i32 = express(cr, g, brain, looks, 1, MODE_PLAN, dims, &x, cells, 0)
         if nb1 > 10 { big = big + 1 }
         if nb1 > biggest { biggest = nb1 }
         if !body_ok(cells, 0, nb1, dims) {
@@ -123,7 +124,7 @@ function main() -> i32 {
             g[prog_at(2 * L_WORDS, 0) + w] = g[prog_at(L_WORDS, 1) + w]
             g[prog_at(2 * L_WORDS, 1) + w] = g[prog_at(L_WORDS, 0) + w]
         }
-        let nb2: i32 = express(cr, g, brain, 2, MODE_PLAN, dims, &x, cells, 0)
+        let nb2: i32 = express(cr, g, brain, looks, 2, MODE_PLAN, dims, &x, cells, 0)
         if cr[2].plan != h1 or nb2 != nb1 {
             printf("FAIL 3 homolog swap changed the body\n")
             return 3
@@ -190,18 +191,18 @@ function main() -> i32 {
 
     # 7. Morph mode: traits act on function.
     luca(g, 0, &st)
-    let e0: i32 = express(cr, g, brain, 0, MODE_MORPH, 2, &x, cells, 0)
+    let e0: i32 = express(cr, g, brain, looks, 0, MODE_MORPH, 2, &x, cells, 0)
     let m0: f32 = cr[0].mass
     let v0: f32 = cr[0].vmax
     l_set_dosage(g, 0, M_SIZE, 8, 12)
-    let e1: i32 = express(cr, g, brain, 0, MODE_MORPH, 2, &x, cells, 0)
+    let e1: i32 = express(cr, g, brain, looks, 0, MODE_MORPH, 2, &x, cells, 0)
     if cr[0].mass <= m0 {
         printf("FAIL 7 bigger cell not heavier\n")
         return 7
     }
     l_set_dosage(g, 0, M_SIZE, 8, 4)
     l_set_int(g, 0, M_FLAGN, 3, 4)
-    let e2: i32 = express(cr, g, brain, 0, MODE_MORPH, 2, &x, cells, 0)
+    let e2: i32 = express(cr, g, brain, looks, 0, MODE_MORPH, 2, &x, cells, 0)
     if cr[0].vmax <= v0 {
         printf("FAIL 7 more flagella not faster\n")
         return 7
@@ -211,7 +212,7 @@ function main() -> i32 {
     l_set_dosage(g, 0, M_RAPTOR, 4, 8)
     l_set_int(g, 0, M_SPINEN, 4, 9)
     l_set_dosage(g, 0, M_SPINEL, 6, 12)
-    let e3: i32 = express(cr, g, brain, 0, MODE_MORPH, 2, &x, cells, 0)
+    let e3: i32 = express(cr, g, brain, looks, 0, MODE_MORPH, 2, &x, cells, 0)
     if cr[0].attack <= a0 or cr[0].defense <= d0 {
         printf("FAIL 7 raptorial or spines do nothing\n")
         return 7

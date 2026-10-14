@@ -53,13 +53,17 @@ struct Hud {
     menu_dims: i32,
     toast: string,
     toast_t: i32,
+    # milliseconds per frame spent simulating and drawing
+    sim_ms: f32,
+    draw_ms: f32,
     # a draw list for portraits
     dl: DrawList
 }
 
 export function hud_new(u: f32, frame_h: i32) -> Hud {
     return Hud { u: u, show: true, help: false, menu: false, menu_sel: 0, menu_mode: MODE_PLAN,
-                 menu_dims: 2, toast: "", toast_t: 0, dl: drawlist_new(frame_h) }
+                 menu_dims: 2, toast: "", toast_t: 0, sim_ms: 0.0, draw_ms: 0.0,
+                 dl: drawlist_new(frame_h) }
 }
 
 function px(h: ptr<Hud>, v: f32) -> i32 {
@@ -68,11 +72,13 @@ function px(h: ptr<Hud>, v: f32) -> i32 {
 
 # Draw a line of text; returns the x where it ends.
 function text(f: Frame, h: ptr<Hud>, x: i32, y: i32, s: string, face: i32, pt: f32, rgb: i32) -> i32 {
-    return x + typo_line(f.px, f.w, f.h, x, y, s, face, px(h, pt), rgb, 255, 1)
+    let mut tr: i32 = 0
+    if f.alpha { tr = 1 }
+    return x + typo_line(f.px, f.w, f.h, x, y, s, face, px(h, pt), rgb, 255, 1, tr)
 }
 
 function text_w(f: Frame, h: ptr<Hud>, s: string, face: i32, pt: f32) -> i32 {
-    return typo_line(f.px, f.w, f.h, 0, 0, s, face, px(h, pt), 0, 255, 0)
+    return typo_line(f.px, f.w, f.h, 0, 0, s, face, px(h, pt), 0, 255, 0, 0)
 }
 
 # A label and a value side by side; returns the x after them.
@@ -261,6 +267,10 @@ function hud_top(f: Frame, h: ptr<Hud>, l: ptr<Life>, cs: ptr<Census>, preset: i
     let mut vw: string = "2D view"
     if view3d { vw = "3D view" }
     let fs: string = num_fix(fps as f64, 0, "", " fps")
+    let tm: string = num_fix(h.sim_ms as f64, 1, "sim ", " ms")
+    let td: string = num_fix(h.draw_ms as f64, 1, "draw ", " ms")
+    let s4: i32 = text(f, h, x + w - text_w(f, h, tm, FACE_TEXT, 10.5) - px(h, 16.0), y + px(h, 56.0), tm, FACE_TEXT, 10.5, FAINT)
+    let s5: i32 = text(f, h, x + w - text_w(f, h, td, FACE_TEXT, 10.5) - px(h, 16.0), y + px(h, 70.0), td, FACE_TEXT, 10.5, FAINT)
     let s2: i32 = text(f, h, x + w - text_w(f, h, vw, FACE_TEXT, 10.5) - px(h, 16.0), y + px(h, 28.0), vw, FACE_TEXT, 10.5, FAINT)
     let s3: i32 = text(f, h, x + w - text_w(f, h, fs, FACE_TEXT, 10.5) - px(h, 16.0), y + px(h, 42.0), fs, FACE_TEXT, 10.5, FAINT)
 }
@@ -529,7 +539,7 @@ function hud_inspector(f: Frame, h: ptr<Hud>, l: ptr<Life>, i: i32, look: Look) 
 
 # A unicellular organism's morphological genes as small bars.
 function morph_traits(f: Frame, h: ptr<Hud>, l: ptr<Life>, i: i32, x: i32, y: i32, bottom: i32) -> void {
-    let m: Morph = morph_decode(l.genome, i * L_WORDS)
+    let m: Morph = l.looks[i]
     let a: i32 = text(f, h, x, y, "Genes", FACE_TEXT, 9.5, FAINT)
     let vals: array<f32, 11> = [m.size, m.elong, (m.flag_n as f32) / 7.0, m.flag_l, m.cilia, m.chloro,
                                 m.mouth, m.raptor, (m.spine_n as f32) * m.spine_l / 15.0, m.membrane, m.eyespot]
@@ -578,7 +588,7 @@ function key_row(f: Frame, h: ptr<Hud>, x: i32, y: i32, k: string, what: string)
 
 function hud_help(f: Frame, h: ptr<Hud>) -> void {
     let w: i32 = px(h, 560.0)
-    let hh: i32 = px(h, 470.0)
+    let hh: i32 = px(h, 494.0)
     let x: i32 = (f.w - w) / 2
     let y: i32 = (f.h - hh) / 2
     fb_panel(f, x, y, w, hh, 14.0 * h.u, 0x07080a, 236)
@@ -611,6 +621,8 @@ function hud_help(f: Frame, h: ptr<Hud>) -> void {
     key_row(f, h, ix, ky, "R", "same world, new seed")
     ky = ky + px(h, 22.0)
     key_row(f, h, ix, ky, "Z", "whole world in view")
+    ky = ky + px(h, 22.0)
+    key_row(f, h, ix, ky, "G", "quality: fast, balanced or full resolution")
     ky = ky + px(h, 22.0)
     key_row(f, h, ix, ky, "Return", "full screen on or off")
     ky = ky + px(h, 22.0)
