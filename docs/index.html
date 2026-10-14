@@ -115,6 +115,21 @@ footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
 </section>
 
 <section>
+  <h2>Pixels from the genome</h2>
+  <p>The default view draws the world straight from the grids the simulation keeps: each world cell takes its colour from its algae, detritus, flow and terrain, and each body cell is a square of its type's colour, laid out where the developmental program put it. Single cells are rasterised from their morphological genes. The frame is drawn at half size and scaled up by the GPU, so a full-screen frame takes about 12 ms. V switches to the smooth natural, bright-field and dark-field styles.</p>
+  <div class="grid">
+    <div class="card">
+      <video src="media/pixel_ocean.mp4" poster="media/pixel_ocean.png" autoplay muted loop playsinline></video>
+      <div class="body"><p>The ocean in pixels, following a predator.</p></div>
+    </div>
+    <div class="card">
+      <img src="media/pixel_morph.png" alt="Single-celled organisms rasterised from their genes in a petri dish" loading="lazy">
+      <div class="body"><p>A petri dish in morphology mode: outline, nucleus, eyespot, flagella and cilia, each from a gene.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
   <h2>Three ways to build an organism</h2>
   <div class="grid">
     <div class="card">
@@ -235,7 +250,7 @@ footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
     <tr><td class="k">wheel, drag</td><td>Zoom and pan; in 3D, right-drag turns</td></tr>
     <tr><td class="k">click</td><td>Follow an organism; Esc lets go</td></tr>
     <tr><td class="k">3</td><td>2D or 3D view</td></tr>
-    <tr><td class="k">V</td><td>Natural, bright-field or dark-field</td></tr>
+    <tr><td class="k">V</td><td>Pixels, natural, bright-field or dark-field</td></tr>
     <tr><td class="k">F</td><td>Show the flow</td></tr>
     <tr><td class="k">G</td><td>Quality: fast, balanced or full resolution</td></tr>
     <tr><td class="k">H</td><td>Every key</td></tr>

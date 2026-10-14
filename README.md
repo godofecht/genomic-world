@@ -382,7 +382,13 @@ Animation layers (`viz/display.flow`): the world, which on a large panel
 is drawn at half resolution with the water at a quarter and scaled by the
 GPU, and the overlay, drawn at full resolution with CoreText type.
 
-- 2D view: water shaded from the world's fields (algae, detritus,
+- Pixels, the default: each world cell takes its colour straight from the
+  simulation's grids (algae, detritus, flow, terrain), and each body cell
+  is a square of its type's colour where the developmental program put it;
+  single cells are rasterised from their morphological genes. Drawn at
+  half size and scaled by the GPU with nearest filtering; a full-screen
+  frame takes about 12 ms.
+- 2D view, smooth styles: water shaded from the world's fields (algae, detritus,
   vorticity, caustics, relief lit from the upper left, shore foam), marine
   snow carried by the currents, organisms, and effects for births, kills
   and deaths. At night organisms glow.
@@ -403,7 +409,7 @@ GPU, and the overlay, drawn at full resolution with CoreText type.
 | Wheel, drag | Zoom and pan; in 3D, right-drag turns the camera |
 | Click | Follow an organism; Esc lets go |
 | 3 | 2D or 3D view |
-| V | Natural, bright-field or dark-field |
+| V | Pixels, natural, bright-field or dark-field |
 | F | Show the flow |
 | G | Quality: fast, balanced or full resolution |
 | I | Hide or show the panels |
