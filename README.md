@@ -332,12 +332,11 @@ Each brain has two parts, both genetic.
   values, so loops among them carry information forward.
 
 The founders have no evolved neurons and a silent hidden core, so
-anything a network does has evolved. In a 30,000-tick ocean run the mean
-network grew from 0.7 neurons to 11.6, the largest to 18. In Gause's dish
-with a refuge the mean reached 2.2, and from tick 12,000 parents carried
-0.27 to 0.68 more neurons than the population average: larger networks
-were being selected. Part of the growth in the ocean may be mutation
-pressure, since insertion is more frequent than deletion.
+anything a network does has evolved. Networks do grow: in a 30,000-tick
+ocean run the mean reached 11.6 neurons and the largest 18. A controlled
+experiment (below) shows that in Gause's dish this growth is mutation
+pressure: networks that evolve but drive nothing grow as large as active
+ones. No selection for larger networks is detectable there.
 
 ### Ecology
 
@@ -369,29 +368,32 @@ pressure, since insertion is more frequent than deletion.
 | Phototaxis | a slide lit from one end, poor medium, green swimmers with eyespots | |
 | Serial transfer | a tenth moves to fresh medium every 600 ticks | Lenski, Rose, Simpson and Tadler (1991), American Naturalist 138: 1315 |
 
-These are simplified versions. What runs of them show (seed 20261014,
-`./run.sh life-bench` with GW_PRESET):
+These are simplified versions. What they show is measured below.
 
-- Predator and prey: predators reach 33 percent of the population within
-  1,500 ticks, prey crash, prey recover, predators boom to 99 percent of
-  88 survivors at tick 14,000, and both are extinct by 14,838. Gause saw
-  Didinium eat every Paramecium and then starve.
-- With the refuge, prey crowd into the sediment while predators fill the
-  open dish.
-- MEGA-plate: mean resistance rises from 0.003 to 0.29 in 2,000 ticks and
-  levels at about 0.39, the most resistant cell at 0.875, enough for the
-  highest band; the population spreads over the whole plate (9,500 cells).
-- Range expansion: the colony grows outward from the drop to about 3,900
-  cells, and the two neutral strains separate into sectors at its edge.
-  Once the agar is used it settles near 1,500 on what regrows.
-- Serial transfer: a population of about 250 at each transfer holds
-  steady through ten transfers.
-- Phototaxis: green cells gather toward the lamp, holding a mean position
-  of 172 to 185 along the slide (128 would be no bias) from tick 2,000 to
-  11,000.
-- Open ocean: predators appear within 2,000 ticks and settle between 2
-  and 16 percent; mixotrophs come and go; the largest bodies reach 35
-  cells by tick 1,500.
+### Evidence: replicated, controlled experiments
+
+`./run.sh experiment NAME` runs a treatment arm and its controls from the
+same seeds (5 replicates, 8 for the refuge experiment), writes every time
+series to `out/exp/NAME.csv`, and reports each outcome over the last
+quarter of the run as a mean with a 95 percent confidence interval, and
+the difference between arms with a 95 percent Welch interval.
+`tools/plot_experiments.py` draws the charts on the project page.
+
+| Experiment | Outcome | Treatment | Control | Difference (95% CI) | Reading |
+|---|---|---|---|---|---|
+| Range expansion, agar against stirred liquid | local over global heterozygosity | 0.058 | 0.935 | -0.877 (-0.929 to -0.825) | Strains segregate at an expanding front by drift and stay mixed in liquid, as Hallatschek et al. found |
+| MEGA-plate, drug against no drug | mean resistance | 0.387 | 0.003 | 0.384 (0.368 to 0.399) | Resistance evolves only under the drug; every drug replicate reached the top band (highest resistance 0.875 against 0.228) |
+| Predator and prey, no refuge against refuge | prey alive at the end | 35 | 2,204 | -2,168 (-2,302 to -2,034) | Prey persist with a refuge in 8 of 8; without, prey and predator both die out in 2 of 8, prey die out alone in 2, and a remnant of 54 to 86 prey holds on in 4 |
+| Phototaxis, gradient against even light | mean position (128 = no bias) | 158.5 | 128.3 | 30.2 (15.3 to 45.0) | Cells gather toward the lamp |
+| Phototaxis, gradient against blinded light sense | mean position | 158.5 | 160.3 | -1.8 (-19.4 to 15.8) | Gathering does not need the sense: within 8,000 ticks it comes from growth where light is strong; steering adds nothing measurable |
+| Networks, active against inert | mean evolved neurons | 2.75 | 3.40 | -0.65 (-2.11 to 0.81) | Network growth is mutation pressure; no detectable selection for larger networks |
+
+Two earlier single-run statements did not survive these controls and have
+been withdrawn: that cells steer toward the light, and that larger
+networks were being selected. The first refuge experiment also used a
+predator that could graze when prey ran out (`out/exp/refuge_facultative.txt`):
+prey died out in all 8 dishes without a refuge and predators never did.
+The founding predator now has no cytostome, as Didinium cannot graze.
 
 ### Viewing
 
@@ -444,6 +446,25 @@ GPU, and the overlay, drawn at full resolution with CoreText type.
 
 Every life-world run gives the same state hash on 1 and 8 threads, in
 each of the three modes (`run.sh test`).
+
+## What it would take to be a research tool
+
+Done: deterministic, seeded runs; a formal model description
+(`docs/model.html`, ODD protocol); population-genetic checks of the shared
+genetic engine; replicated, controlled experiments with confidence
+intervals for the life world. Still to do:
+
+- Quantitative checks against theory in the life world, as the Genomic
+  World has: for example the rate at which sector boundaries coarsen at an
+  expanding front, and neutral heterozygosity decay against an estimated
+  effective population size.
+- Calibration: rates and units tied to a real organism for any claim
+  beyond qualitative.
+- A setting where evolved networks pay, with a control showing selection
+  on them, before claiming anything about the evolution of behaviour.
+- Sensitivity analysis: how each result depends on the hand-set
+  constants.
+- More replicates, and outside review by a biologist.
 
 ## Known gaps
 

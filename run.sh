@@ -12,6 +12,8 @@
 #   ./run.sh life-bench headless life world: population, body plans
 #                       (GW_PRESET, GW_MODE, GW_DIMS, GW_TICKS, GW_PROFILE)
 #   ./run.sh life-video N  N frames rendered headless, to out/life.mp4
+#   ./run.sh experiment NAME  replicated, controlled experiment (phototaxis,
+#                       refuge, networks, range, megaplate) to out/exp/
 #   ./run.sh shot       headless life world renders to out/ (see
 #                       life_shot.flow for the GW_ settings)
 #   ./run.sh equilibrium  calibrate, solve the attractors, compare cold and
@@ -91,6 +93,10 @@ case "${1:-gfx}" in
         mkdir -p out
         FLOW_LDFLAGS="-framework CoreText -framework CoreGraphics -framework CoreFoundation" \
             flow run life_shot.flow 2>&1 | quiet
+        ;;
+    experiment)
+        mkdir -p out/exp
+        GW_EXP="${2:-phototaxis}" flow run life_experiment.flow 2>&1 | quiet
         ;;
     life-bench)
         flow run life_bench.flow 2>&1 | quiet

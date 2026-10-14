@@ -1,0 +1,413 @@
+# Replicated, controlled experiments on the life world.
+#
+# Each experiment runs a treatment arm and one or two control arms, each
+# from GW_REPS seeds (the same seeds in every arm), records time series to
+# out/exp/NAME.csv, and reports each outcome per arm as a mean with a 95%
+# confidence interval (Student's t), and the difference between the
+# treatment and each control with a 95% Welch interval. A difference whose
+# interval excludes zero is significant at the 5% level.
+#
+#   GW_EXP=phototaxis  treatment: the light gradient. Controls: the same
+#                      total light spread evenly (does the gradient
+#                      matter?), and the gradient with the light sense
+#                      blinded (is gathering steered, or only grown?).
+#                      Outcome: mean position along the slide, and the
+#                      share of cells in the brightest quarter.
+#   GW_EXP=refuge      Gause's dish without a refuge and with one.
+#                      Outcomes: prey and predators alive at the end.
+#   GW_EXP=networks    Gause's dish with a refuge, evolved networks active,
+#                      against the same networks computed and inherited but
+#                      driving nothing. If networks grow only by mutation
+#                      pressure the two arms match; if larger networks are
+#                      selected, the active arm grows faster.
+#                      Outcomes: mean and largest network size.
+#   GW_EXP=range       a drop of two neutral strains on agar, against a
+#                      stirred liquid culture. Outcome: local
+#                      heterozygosity (how often a cell's nearest neighbour
+#                      is the other strain) over the global 2pq. Drift at
+#                      an expanding front segregates strains (ratio well
+#                      below 1); mixing keeps it near 1.
+#   GW_EXP=megaplate   antibiotic bands against no drug. Outcomes: mean and
+#                      highest resistance.
+#
+# GW_REPS (default 5) and GW_TICKS override each experiment's defaults.
+#
+# Run: ./run.sh experiment NAME
+
+import "stdlib/memory.flow"
+import gsim.config
+import gsim.textbuf
+import glife.lconfig
+import glife.creature
+import glife.lworld
+import glife.census
+import glife.habitat
+
+extern {
+    function getenv(name: string) -> ptr<u8>
+    function atoi(s: ptr<u8>) -> i32
+    function strcmp(a: string, b: string) -> i32
+    function sqrt(x: f64) -> f64
+}
+
+const MAX_ARMS: i32 = 3
+const MAX_REPS: i32 = 30
+const OUTCOMES: i32 = 2
+
+function env_i(name: string, dflt: i32) -> i32 {
+    let v: ptr<u8> = getenv(name)
+    if v == null { return dflt }
+    return atoi(v)
+}
+
+# Two-sided 95% critical value of Student's t.
+function t95(df: f64) -> f64 {
+    if df < 1.5 { return 12.706 }
+    if df < 2.5 { return 4.303 }
+    if df < 3.5 { return 3.182 }
+    if df < 4.5 { return 2.776 }
+    if df < 5.5 { return 2.571 }
+    if df < 6.5 { return 2.447 }
+    if df < 7.5 { return 2.365 }
+    if df < 8.5 { return 2.306 }
+    if df < 9.5 { return 2.262 }
+    if df < 11.0 { return 2.228 }
+    if df < 13.5 { return 2.179 }
+    if df < 17.5 { return 2.131 }
+    if df < 25.0 { return 2.086 }
+    if df < 40.0 { return 2.042 }
+    return 1.96
+}
+
+function mean_of(x: ptr<f64>, n: i32) -> f64 {
+    let mut s: f64 = 0.0
+    for k in 0 to n {
+        s = s + x[k]
+    }
+    return s / (n as f64)
+}
+
+function var_of(x: ptr<f64>, n: i32) -> f64 {
+    if n < 2 { return 0.0 }
+    let m: f64 = mean_of(x, n)
+    let mut s: f64 = 0.0
+    for k in 0 to n {
+        s = s + (x[k] - m) * (x[k] - m)
+    }
+    return s / ((n - 1) as f64)
+}
+
+# Strain of an organism in the range experiment: founders were given hue
+# dosage 0 or 8 of 16 by group.
+function strain(l: ptr<Life>, i: i32) -> i32 {
+    if l.looks[i].hue < 0.25 { return 0 }
+    return 1
+}
+
+# Local heterozygosity over global 2pq: for each cell, its nearest other
+# cell within reach; the share of such pairs that differ in strain,
+# divided by what random mixing would give.
+function segregation(l: ptr<Life>) -> f64 {
+    let n: i32 = l.n
+    if n < 4 { return 0.0 }
+    let mut ones: i32 = 0
+    for i in 0 to n {
+        ones = ones + strain(l, i)
+    }
+    let p: f64 = (ones as f64) / (n as f64)
+    let h: f64 = 2.0 * p * (1.0 - p)
+    if h < 0.001 { return 0.0 }
+    life_index(l)
+    let mut pairs: i32 = 0
+    let mut differ: i32 = 0
+    for i in 0 to n {
+        let cx: i32 = l.cr[i].px as i32
+        let cy: i32 = l.cr[i].py as i32
+        let mut best: i32 = -1
+        let mut bd: f32 = 1000000.0
+        for oy in -2 to 3 {
+            for ox in -2 to 3 {
+                let c: i32 = ((cy + oy) & (WORLD_H - 1)) * WORLD_W + ((cx + ox) & (WORLD_W - 1))
+                for s in l.start[c] to l.start[c + 1] {
+                    let j: i32 = l.order[s]
+                    if j != i {
+                        let dx: f32 = l.cr[j].px - l.cr[i].px
+                        let dy: f32 = l.cr[j].py - l.cr[i].py
+                        let d: f32 = dx * dx + dy * dy
+                        if d < bd {
+                            bd = d
+                            best = j
+                        }
+                    }
+                }
+            }
+        }
+        if best >= 0 {
+            pairs = pairs + 1
+            if strain(l, best) != strain(l, i) { differ = differ + 1 }
+        }
+    }
+    if pairs == 0 { return 0.0 }
+    return ((differ as f64) / (pairs as f64)) / h
+}
+
+# Predators and prey alive, by anatomy (trophic role).
+function count_role(l: ptr<Life>, predators: bool) -> i32 {
+    let mut k: i32 = 0
+    for i in 0 to l.n {
+        let pred: bool = trophic_role(l.cr, i) == ROLE_PREDATOR
+        if pred == predators { k = k + 1 }
+    }
+    return k
+}
+
+function main() -> i32 {
+    let mut name: string = "phototaxis"
+    let ev: ptr<u8> = getenv("GW_EXP")
+    if ev != null { name = ev as string }
+    let mut exp: i32 = -1
+    let mut preset: i32 = 0
+    let mut arms: i32 = 2
+    let mut ticks: i32 = 0
+    let mut every: i32 = 250
+    if strcmp(name, "phototaxis") == 0 {
+        exp = 0
+        preset = P_PHOTOTAXIS
+        arms = 3
+        ticks = 8000
+    } elif strcmp(name, "refuge") == 0 {
+        exp = 1
+        preset = P_GAUSE
+        ticks = 20000
+        every = 500
+    } elif strcmp(name, "networks") == 0 {
+        exp = 2
+        preset = P_REFUGE
+        ticks = 20000
+        every = 1000
+    } elif strcmp(name, "range") == 0 {
+        exp = 3
+        preset = P_RANGE
+        ticks = 3000
+        every = 100
+    } elif strcmp(name, "megaplate") == 0 {
+        exp = 4
+        preset = P_MEGAPLATE
+        ticks = 12000
+        every = 1000
+    }
+    if exp < 0 {
+        printf("unknown experiment %s\n", name)
+        return 2
+    }
+    ticks = env_i("GW_TICKS", ticks)
+    let mut reps: i32 = env_i("GW_REPS", 5)
+    if reps > MAX_REPS { reps = MAX_REPS }
+
+    let arm_names: array<string, 3> = ["treatment", "control", "control 2"]
+    if exp == 0 {
+        arm_names[0] = "gradient"
+        arm_names[1] = "even light"
+        arm_names[2] = "blinded"
+    } elif exp == 1 {
+        arm_names[0] = "no refuge"
+        arm_names[1] = "refuge"
+    } elif exp == 2 {
+        arm_names[0] = "networks active"
+        arm_names[1] = "networks inert"
+    } elif exp == 3 {
+        arm_names[0] = "agar"
+        arm_names[1] = "stirred liquid"
+    } else {
+        arm_names[0] = "antibiotic"
+        arm_names[1] = "no drug"
+    }
+    let out_names: array<string, 2> = ["", ""]
+    if exp == 0 {
+        out_names[0] = "mean position (128 = no bias)"
+        out_names[1] = "share in brightest quarter"
+    } elif exp == 1 {
+        out_names[0] = "prey alive at end"
+        out_names[1] = "predators alive at end"
+    } elif exp == 2 {
+        out_names[0] = "mean evolved neurons"
+        out_names[1] = "largest network"
+    } elif exp == 3 {
+        out_names[0] = "local / global heterozygosity"
+        out_names[1] = "organisms"
+    } else {
+        out_names[0] = "mean resistance"
+        out_names[1] = "highest resistance"
+    }
+
+    let res: ptr<f64> = alloc_zeroed((MAX_ARMS * MAX_REPS * OUTCOMES * 8) as i64) as ptr<f64>
+    let mut csv: TextBuf = tb_new(1 << 20)
+    tb_str(&csv, "arm,rep,tick,organisms,m1,m2\n")
+    let mut cs: Census = census_new()
+    printf("%s: %d arms, %d replicates, %d ticks\n", name, arms, reps, ticks)
+    for arm in 0 to arms {
+        for rep in 0 to reps {
+            let seed: u32 = (20261014 + rep * 7919) as u32
+            let mut cfg: LifeCfg = preset_cfg(preset, preset_mode(preset), 2)
+            if exp == 0 and arm == 1 { cfg.light_uniform = true }
+            if exp == 0 and arm == 2 { cfg.blind_light = true }
+            if exp == 1 and arm == 1 { preset = P_REFUGE }
+            if exp == 1 and arm == 0 { preset = P_GAUSE }
+            if exp == 1 { cfg = preset_cfg(preset, preset_mode(preset), 2) }
+            if exp == 2 and arm == 1 { cfg.net_inert = true }
+            if exp == 3 and arm == 1 {
+                cfg.viscosity = 1.0
+                cfg.flow = 0.12
+            }
+            if exp == 4 and arm == 1 { cfg.no_toxin = true }
+            let mut l: Life = life_create_cfg(seed, preset, cfg)
+            let mut acc0: f64 = 0.0
+            let mut acc1: f64 = 0.0
+            let mut nacc: i32 = 0
+            let mut t: i32 = 0
+            while t < ticks and l.n > 0 {
+                life_step(&l)
+                t = t + 1
+                if t % every == 0 or t == ticks {
+                    let mut m1: f64 = 0.0
+                    let mut m2: f64 = 0.0
+                    if exp == 0 {
+                        let mut xs: f64 = 0.0
+                        let mut bright: i32 = 0
+                        for i in 0 to l.n {
+                            xs = xs + (l.cr[i].px as f64)
+                            if l.cr[i].px > 189.0 { bright = bright + 1 }
+                        }
+                        m1 = xs / (l.n as f64)
+                        m2 = (bright as f64) / (l.n as f64)
+                    } elif exp == 1 {
+                        m1 = count_role(&l, false) as f64
+                        m2 = count_role(&l, true) as f64
+                    } elif exp == 2 {
+                        census_genomes(&cs, l.cr, l.genome, l.n)
+                        m1 = cs.mean_neur as f64
+                        m2 = cs.max_neur as f64
+                    } elif exp == 3 {
+                        m1 = segregation(&l)
+                        m2 = l.n as f64
+                    } else {
+                        census_genomes(&cs, l.cr, l.genome, l.n)
+                        m1 = cs.mean_resist as f64
+                        m2 = cs.max_resist as f64
+                    }
+                    tb_str(&csv, arm_names[arm])
+                    tb_char(&csv, 44)
+                    tb_int(&csv, rep as i64)
+                    tb_char(&csv, 44)
+                    tb_int(&csv, t as i64)
+                    tb_char(&csv, 44)
+                    tb_int(&csv, l.n as i64)
+                    tb_char(&csv, 44)
+                    tb_fixed(&csv, m1, 4)
+                    tb_char(&csv, 44)
+                    tb_fixed(&csv, m2, 4)
+                    tb_nl(&csv)
+                    # Outcomes: the mean over the last quarter of the run,
+                    # except survival counts, which are the final values.
+                    if t * 4 >= ticks * 3 {
+                        acc0 = acc0 + m1
+                        acc1 = acc1 + m2
+                        nacc = nacc + 1
+                    }
+                    if exp == 1 and t == ticks {
+                        acc0 = m1
+                        acc1 = m2
+                        nacc = 1
+                    }
+                }
+            }
+            if nacc == 0 { nacc = 1 }
+            let base: i32 = (arm * MAX_REPS + rep) * OUTCOMES
+            res[base] = acc0 / (nacc as f64)
+            res[base + 1] = acc1 / (nacc as f64)
+            printf("  %-16s rep %d: %s %.3f, %s %.3f (%d organisms at tick %d)\n", arm_names[arm], rep,
+                   out_names[0], res[base], out_names[1], res[base + 1], l.n, t)
+        }
+    }
+    let path: ptr<u8> = alloc_zeroed(256) as ptr<u8>
+    let mut sum: TextBuf = tb_new(1 << 16)
+    tb_str(&sum, name)
+    tb_str(&sum, ": ")
+    tb_int(&sum, reps as i64)
+    tb_str(&sum, " replicates per arm, ")
+    tb_int(&sum, ticks as i64)
+    tb_str(&sum, " ticks\n")
+    let xa: ptr<f64> = alloc_zeroed((MAX_REPS * 8) as i64) as ptr<f64>
+    let xb: ptr<f64> = alloc_zeroed((MAX_REPS * 8) as i64) as ptr<f64>
+    for o in 0 to OUTCOMES {
+        tb_str(&sum, "\n")
+        tb_str(&sum, out_names[o])
+        tb_str(&sum, "\n")
+        for arm in 0 to arms {
+            for rep in 0 to reps {
+                xa[rep] = res[(arm * MAX_REPS + rep) * OUTCOMES + o]
+            }
+            let m: f64 = mean_of(xa, reps)
+            let half: f64 = t95((reps - 1) as f64) * sqrt(var_of(xa, reps) / (reps as f64))
+            tb_str(&sum, "  ")
+            tb_str(&sum, arm_names[arm])
+            tb_str(&sum, ": ")
+            tb_fixed(&sum, m, 3)
+            tb_str(&sum, " (95% CI ")
+            tb_fixed(&sum, m - half, 3)
+            tb_str(&sum, " to ")
+            tb_fixed(&sum, m + half, 3)
+            tb_str(&sum, ")\n")
+        }
+        for arm in 1 to arms {
+            for rep in 0 to reps {
+                xa[rep] = res[rep * OUTCOMES + o]
+                xb[rep] = res[(arm * MAX_REPS + rep) * OUTCOMES + o]
+            }
+            let va: f64 = var_of(xa, reps) / (reps as f64)
+            let vb: f64 = var_of(xb, reps) / (reps as f64)
+            let d: f64 = mean_of(xa, reps) - mean_of(xb, reps)
+            let se: f64 = sqrt(va + vb)
+            let mut df: f64 = 1000.0
+            let den: f64 = va * va / ((reps - 1) as f64) + vb * vb / ((reps - 1) as f64)
+            if den > 0.0 { df = (va + vb) * (va + vb) / den }
+            let half: f64 = t95(df) * se
+            tb_str(&sum, "  ")
+            tb_str(&sum, arm_names[0])
+            tb_str(&sum, " minus ")
+            tb_str(&sum, arm_names[arm])
+            tb_str(&sum, ": ")
+            tb_fixed(&sum, d, 3)
+            tb_str(&sum, " (95% CI ")
+            tb_fixed(&sum, d - half, 3)
+            tb_str(&sum, " to ")
+            tb_fixed(&sum, d + half, 3)
+            if d - half > 0.0 or d + half < 0.0 {
+                tb_str(&sum, "; significant")
+            } else {
+                tb_str(&sum, "; not significant")
+            }
+            tb_str(&sum, ")\n")
+        }
+    }
+    let ok1: bool = tb_save(&csv, exp_path(path, name, ".csv"))
+    let ok2: bool = tb_save(&sum, exp_path(path, name, ".txt"))
+    let zero: u8 = 0 as u8
+    sum.data[sum.len] = zero
+    printf("\n%s", sum.data as string)
+    return 0
+}
+
+@cEmbed("#include <stdio.h>
+static const char* exp_path_c(uint8_t* buf, const char* name, const char* ext) {
+    snprintf((char*)buf, 256, \"out/exp/%s%s\", name, ext);
+    return (const char*)buf;
+}")
+
+extern {
+    function exp_path_c(buf: ptr<u8>, name: string, ext: string) -> string
+}
+
+function exp_path(buf: ptr<u8>, name: string, ext: string) -> string {
+    return exp_path_c(buf, name, ext)
+}

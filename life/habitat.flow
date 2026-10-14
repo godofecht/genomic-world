@@ -10,7 +10,7 @@
 #   DISH         a liquid culture in a petri dish under a lamp, gently
 #                stirred
 #   RANGE        a colony spreading on agar from a central drop of two
-#                neutral colour strains. On agar cells hardly move, so
+#                neutral colour strains, well mixed in the drop. On agar cells hardly move, so
 #                the colony grows at its edge, where few cells found each
 #                new patch: the strains separate into sectors by drift.
 #                Hallatschek, Hersen, Ramanathan and Nelson (2007),
@@ -111,6 +111,7 @@ export function preset_cfg(p: i32, mode: i32, dims: i32) -> LifeCfg {
         c.found_y = 128.0
         c.found_r = 3.0
         c.groups = 2
+        c.mix_groups = true
         c.sex = 0.0
         c.founder_bacterial = true
     } elif p == P_GAUSE or p == P_REFUGE {
@@ -194,7 +195,7 @@ export function habitat_apply(l: ptr<Life>) -> void {
 
 # Fields the experiment needs: toxin bands, refuge, light gradient.
 export function experiment_fields(l: ptr<Life>, p: i32) -> void {
-    if p == P_MEGAPLATE {
+    if p == P_MEGAPLATE and !l.cfg.no_toxin {
         # Five bands from each end to the middle: none, then 0.6, 1.4, 2.2
         # and 3 units of toxin. Full resistance (all 16 alleles) tolerates
         # TOX_TOL = 4 units, so each band needs about three more alleles.
@@ -220,7 +221,18 @@ export function experiment_fields(l: ptr<Life>, p: i32) -> void {
             }
         }
     }
-    if p == P_PHOTOTAXIS {
+    if p == P_PHOTOTAXIS and l.cfg.light_uniform {
+        # The same total light, spread evenly: the mean of the gradient.
+        let mut tot: f32 = 0.0
+        for x in SLIDE_X0 to SLIDE_X1 {
+            let t: f32 = ((x as f32) - (SLIDE_X0 as f32)) / ((SLIDE_X1 - SLIDE_X0) as f32)
+            tot = tot + 0.04 + 0.96 * t * t
+        }
+        let mean: f32 = tot / ((SLIDE_X1 - SLIDE_X0) as f32)
+        for c in 0 to WORLD_CELLS {
+            l.lightmap[c] = mean
+        }
+    } elif p == P_PHOTOTAXIS {
         for y in 0 to WORLD_H {
             for x in 0 to WORLD_W {
                 let t: f32 = ((x as f32) - (SLIDE_X0 as f32)) / ((SLIDE_X1 - SLIDE_X0) as f32)
@@ -234,7 +246,8 @@ export function experiment_fields(l: ptr<Life>, p: i32) -> void {
 }
 
 # Turn founder i into a predator: in body-plan modes, spikes beside the
-# core; in morph mode, raptorial organelles and a larger body. A distinct
+# core; in morph mode, raptorial organelles, a larger body and no
+# cytostome, so it lives only on prey. A distinct
 # hue marks them.
 function make_predator(l: ptr<Life>, i: i32) -> void {
     let g: ptr<u32> = l.genome
@@ -242,6 +255,9 @@ function make_predator(l: ptr<Life>, i: i32) -> void {
     prog_set(g, gb, 0, make_gene0(CELL_CORE, 0, grow_to(1), grow_to(3), grow_to(2), 8), make_gene1(0, 0, 0, 0))
     prog_set(g, gb, 3, make_gene0(CELL_SPIKE, 0, 0, 0, 0, 8), make_gene1(0, 0, 0, 0))
     l_set_dosage(g, gb, M_RAPTOR, 4, 6)
+    # No cytostome: like Didinium, the founding predator cannot graze.
+    # Mutation can give one back.
+    l_set_dosage(g, gb, M_MOUTH, 6, 0)
     l_set_dosage(g, gb, M_SIZE, 8, 6)
     l_set_dosage(g, gb, M_HUE, 8, 13)
     l_set_dosage(g, gb, M_EYESPOT, 4, 6)
@@ -269,7 +285,14 @@ function make_predator(l: ptr<Life>, i: i32) -> void {
 
 # A new world for preset p in the given mode and body dimensions.
 export function life_create(seed: u32, p: i32, mode: i32, dims: i32) -> Life {
-    let mut l: Life = life_new(seed, preset_cfg(p, mode, dims))
+    return life_create_cfg(seed, p, preset_cfg(p, mode, dims))
+}
+
+# The same, with a configuration already adjusted (experiment controls).
+export function life_create_cfg(seed: u32, p: i32, cfg: LifeCfg) -> Life {
+    let mode: i32 = cfg.mode
+    let dims: i32 = cfg.dims
+    let mut l: Life = life_new(seed, cfg)
     habitat_apply(&l)
     experiment_fields(&l, p)
     life_found(&l)

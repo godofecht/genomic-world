@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Life World Model</title>
+<meta name="description" content="The Life World model described in the ODD protocol: purpose, entities, processes, design concepts, initialisation and submodels, with every parameter.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<style>
+:root { --bg: #0b0d10; --panel: #12161b; --line: #222830; --ink: #ece6da; --dim: #9a948a; --faint: #6b665f; --accent: #f2c46e; }
+:root[data-theme="light"] { --bg: #f6f3ee; --panel: #ffffff; --line: #e2ddd4; --ink: #1d1b18; --dim: #5c574f; --faint: #8d877d; --accent: #a8731a; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) { --bg: #f6f3ee; --panel: #ffffff; --line: #e2ddd4; --ink: #1d1b18; --dim: #5c574f; --faint: #8d877d; --accent: #a8731a; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.65 Inter, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.wrap { max-width: 860px; margin: 0 auto; padding: 0 16px 80px; }
+header { padding: 56px 0 10px; }
+h1 { font-size: 36px; font-weight: 600; margin: 0 0 8px; }
+h2 { font-size: 22px; font-weight: 600; margin: 44px 0 10px; }
+h3 { font-size: 17px; font-weight: 600; margin: 26px 0 6px; }
+p, li { max-width: 760px; }
+.dim { color: var(--dim); }
+code, .m { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 14px; }
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; margin: 8px 0 16px; }
+th, td { text-align: left; padding: 6px 9px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--dim); font-weight: 500; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>Life World: the model</h1>
+  <p class="dim">Described in the ODD protocol (Overview, Design concepts, Details) of Grimm et al. (2006, 2010, 2020). Every value below is the one in the code; file names point to where it lives. <a href="index.html">Back to the project page</a>.</p>
+</header>
+
+<h2>1. Purpose and patterns</h2>
+<p>The model asks how bodies, behaviour and ecological roles evolve when everything an organism can do follows from a genome that is inherited, recombined and mutated, under an energy budget, in a moving physical environment. It is a platform for qualitative eco-evolutionary experiments, several of them simplified versions of published laboratory experiments, so that its behaviour can be held against known results.</p>
+<p>Patterns the model is expected to reproduce, tested by replicated, controlled runs (<code>./run.sh experiment</code>; results on the <a href="index.html#evidence">project page</a>):</p>
+<ul>
+  <li>Segregation of neutral strains by drift at the edge of an expanding colony, absent in a mixed culture (Hallatschek et al. 2007).</li>
+  <li>Predator and prey both going extinct in a small homogeneous vessel, and prey persisting where a refuge protects them (Gause 1934).</li>
+  <li>Stepwise evolution of resistance across an antibiotic gradient, absent without the drug (Baym et al. 2016).</li>
+  <li>Accumulation of photosynthetic cells toward light, which depends on sensing the gradient.</li>
+</ul>
+
+<h2>2. Entities, state variables and scales</h2>
+<h3>World</h3>
+<p>A 256 by 256 grid of square cells (<code>sim/config.flow</code>), toroidal in the ocean; in a vessel, cells outside the vessel are walls. Each cell holds: terrain (open, ridge, pass), fertility, food (algae standing for primary production and dissolved nutrient, 0 to about 1), detritus, toxin, a light multiplier, and a refuge flag. Fluid velocity lives on a 128 by 128 grid, one fluid cell per 2 by 2 world cells (<code>life/fluid.flow</code>). One tick is the time step; no physical units are assigned.</p>
+<h3>Global drivers</h3>
+<ul>
+  <li>Ocean (<code>life/ocean.flow</code>): phases of current strength (period 6000 ticks), gyre position and upwelling position, each advancing at a constant rate.</li>
+  <li>Sun: a phase with period 2400 ticks; light <span class="m">L = clip((sin φ + 0.25) / 1.25, 0, 1)</span>. Laboratory presets use a lamp at constant 0.8 instead.</li>
+  <li>Climate and seasons, inherited from the Genomic World (<code>sim/climate.flow</code>); used in the ocean only.</li>
+</ul>
+<h3>Organisms</h3>
+<p>Each organism (<code>life/creature.flow</code>) has: position, heading, energy, age, breeding cooldown, generation, kill count, the core brain's four hidden states, last turn and thrust, a random seed, and a phenotype derived at birth: mass, upkeep, top speed, drag, bite, attack, defence, energy capacity, sensing ranges, photosynthetic capacity, resistance, thermal optimum, breeding threshold, body cells, network size, colour, and two developmental signature words.</p>
+<h3>Genome</h3>
+<p>Diploid (<code>life/lgenome.flow</code>). Per haplotype:</p>
+<table>
+<tr><th>Part</th><th>Contents</th></tr>
+<tr><td>Fixed, 640 loci on 20 chromosomes</td><td>Morphology and physiology (128 loci: size, elongation, lobes, pigment, pattern, flagella, cilia, spines, membrane, chlorophyll, resistance, cytostome, eyespot, lipid, developmental rounds, raptorial organelles); core brain weights (432 loci: 72 weights of 6 bits); thermal optimum (16); breeding threshold (12); neutral markers (30); neutral (22).</td></tr>
+<tr><td>Developmental program, up to 48 genes of 64 bits</td><td>Cell-identity genes: cell type, growth timer, for each of six directions a grow bit and target identity, cell size and hue shift.</td></tr>
+<tr><td>Neuron list, up to 32 genes of 64 bits</td><td>Evolved neurons: activation, bias, self weight, three (source, weight) pairs, weights onto turning and thrust.</td></tr>
+</table>
+
+<h2>3. Process overview and scheduling</h2>
+<p>Each tick, in order (<code>life_step</code> in <code>life/lworld.flow</code>):</p>
+<ol>
+  <li>Drivers: climate, Ocean and Sun advance; daylight is computed.</li>
+  <li>Fluid: forcing, friction, semi-Lagrangian advection, pressure projection with walls.</li>
+  <li>Medium: upwelling sets fertility (ocean, every 16 ticks); food and detritus are advected by the fluid (or food diffuses, in still media); food regrows; detritus is remineralised.</li>
+  <li>Spatial index of organisms by cell.</li>
+  <li>Sense and act, all organisms in parallel against a snapshot of the others: senses, brain, turning and thrust, movement with the current, costs, background mortality, ageing.</li>
+  <li>Spatial index again.</li>
+  <li>Feeding by cell rows in parallel: grazing, scavenging, photosynthesis.</li>
+  <li>Predation, serially in slot order.</li>
+  <li>Reproduction, serially in slot order: sexual or by fission; offspring develop.</li>
+  <li>Serial transfer, in that preset.</li>
+  <li>Compaction: the dead are removed and leave detritus.</li>
+</ol>
+<p>Every random draw is a hash of (organism seed, tick, purpose), so results do not depend on thread order. The state hash is checked identical at 1 and 8 threads in every mode (<code>tests/life_determinism.flow</code>).</p>
+
+<h2>4. Design concepts</h2>
+<ul>
+  <li><b>Basic principles.</b> Energy budgets (intake against upkeep, movement and damage costs) decide survival and reproduction. No selection coefficient is a parameter; selection is measured.</li>
+  <li><b>Emergence.</b> Trophic roles, body plans, network size, phototaxis, resistance, community composition and population dynamics all emerge.</li>
+  <li><b>Adaptation.</b> No individual adapts; lineages evolve.</li>
+  <li><b>Objectives.</b> None. Organisms have no fitness function.</li>
+  <li><b>Learning and prediction.</b> None, except what recurrent neurons can hold over time.</li>
+  <li><b>Sensing.</b> Food ahead and to each side at the sensing range; nearest prey, threat and possible mate within range, as a side (left or right) weighted by nearness; own energy; the light gradient along the heading; the current across the body; a bias.</li>
+  <li><b>Interaction.</b> Competition for food and light in a cell; predation within a reach that grows with body radius; mating within that reach.</li>
+  <li><b>Stochasticity.</b> Mutation, recombination, mate and victim choice, attack success, background mortality, heading noise, offspring placement.</li>
+  <li><b>Collectives.</b> None are modelled; groups and forms are observed only.</li>
+  <li><b>Observation.</b> A census every 64 ticks: forms (body plans hashed), trophic roles, energy by source, means of traits, program and network size, selection differentials (parents minus all) on speed, width and network size.</li>
+</ul>
+
+<h2>5. Initialisation</h2>
+<p>Founders (3000 in the ocean; per preset otherwise) are copies of one genotype: in multicellular modes a core with a mouth in front and a motor behind; in morphology mode a small flagellate with a cytostome. Their brains turn toward food and slow over it; the core's hidden layer is silent and there are no evolved neurons. Each founder carries a Poisson number (mean 3) of random mutations in its brain loci or developmental program, as standing variation. Founders are split into marker groups by nearest group centre, or at random where a preset needs the groups well mixed.</p>
+
+<h2>6. Input data</h2>
+<p>None. Terrain comes from the Genomic World's seeded generator (two ridges with passes); vessels are drawn geometrically.</p>
+
+<h2>7. Submodels</h2>
+<h3>Development</h3>
+<p>The expressed program takes, gene by gene, the larger allele value of each field (growth dominant over none). A body starts as one cell of identity 0 at the origin. For up to 1 + (dosage of 12 round loci) rounds, every cell in the upper half (y &le; 0) whose identity's timer has not expired grows, in each direction whose grow bit is set, a cell of the target identity (target modulo program length) into an empty position still in the upper half. Growth stops when a round adds nothing. The upper half is then mirrored. 2D bodies use four directions, 3D bodies six.</p>
+<h3>Phenotype</h3>
+<p>Multicellular modes: mass and upkeep are sums over cells (mass 1, armour 2, eye 0.5, photosynthetic 0.7; upkeep 1, motor 1.5, eye and mouth 1.2, armour 0.8, store and photosynthetic 0.5). Drag <span class="m">D = 0.35 + 0.175 (F &minus; 1) + 0.03 N</span> with F the frontal area (distinct (y, z) columns) and N cells. Top speed <span class="m">min(2.5, 0.4 &middot; motors &middot; f / D)</span>. Bite <span class="m">0.06 &middot; mouths &middot; f / (1 + spikes)</span>. Attack spikes &middot; f; defence armour &middot; f + 0.5 spikes. Energy capacity <span class="m">1 + 1.5 mass + 3 &middot; stores &middot; f</span>. Factors f are 1 in body-plan mode and 0.5 + trait in combined mode, with extra upkeep 0.6 per unit above 1.</p>
+<p>Morphology mode: radius <span class="m">r = 0.5 + 2 &middot; size</span>, aspect <span class="m">1 + 2.5 &middot; elongation</span>; thrust from flagella and cilia; drag from width, area and lobes; bite <span class="m">0.12 (0.3 + r) &middot; cytostome / (1 + 3 &middot; raptorial)</span>; attack <span class="m">3 &middot; raptorial &middot; r</span>; defence <span class="m">0.3 r + 1.8 &middot; membrane + 0.25 &middot; spines</span>; photosynthetic capacity <span class="m">0.6 &middot; chlorophyll &middot; area</span>; upkeep sums the cost of each structure.</p>
+<p>All modes: resistance adds 1.5 &times; resistance to upkeep. Breeding threshold <span class="m">(0.35 + 0.5 t) &middot; capacity</span> with t the threshold dosage fraction.</p>
+<h3>Brain</h3>
+<p>Core: <span class="m">h_j &larr; tanh(&Sigma;_i w_ji x_i + r_j h_j)</span>; turning <span class="m">clip(&Sigma; w x + &Sigma; w h + E_turn, &minus;1, 1)</span>; thrust <span class="m">logistic(&Sigma; w x + &Sigma; w h + E_thrust)</span>. Evolved neurons: <span class="m">s_k &larr; act_k(b_k + a_k s_k + &Sigma;_c w_c src_c)</span>, all updated together from senses, the core's new state and their own previous values; E_turn and E_thrust are the sums of their output weights times their new values. Weights <span class="m">(v &minus; 31.5) / 8</span> for 6-bit v.</p>
+<h3>Movement and costs</h3>
+<p>Heading changes by <span class="m">0.6 &middot; turn + U(&minus;0.05, 0.05)</span>. Position moves by thrust &middot; top speed &middot; viscosity along the heading plus the fluid velocity; a move into a wall is refused and the heading reversed. Cost per tick <span class="m">0.004 &middot; upkeep + 0.0016 &middot; D &middot; v&sup2;</span> + thermal cost <span class="m">0.03 &middot; mass &middot; (T &minus; T_opt)&sup2;</span> (ocean) + toxin harm <span class="m">0.12 &middot; max(0, toxin &minus; 4 &middot; resistance)</span>. Background mortality 0.002 per tick; maximum age 900.</p>
+<h3>Feeding</h3>
+<p>Per cell, organisms in index order: a mouth takes up to its bite of food, then the rest of its bite of detritus at efficiency 0.7. Photosynthesis yields <span class="m">0.06 &middot; L &middot; light map / (1 + 0.6 (food + detritus)) &middot; capacity &middot; share</span>, where share is <span class="m">min(1, 6 / total capacity in the cell)</span>, and consumes 0.25 food per unit of energy. Energy is capped at capacity.</p>
+<h3>Predation</h3>
+<p>An organism with a mouth and attack pays 0.004 and picks uniformly one organism within reach <span class="m">1 + floor(r / 2)</span> (at most 4) cells, outside any refuge, with defence below its attack. It succeeds with probability <span class="m">a / (a + d + 1)</span>, doing damage 0.4 a and gaining 0.6 of it; a kill adds half the victim's mass.</p>
+<h3>Reproduction</h3>
+<p>An organism of age 25 or more, off cooldown, with energy at or above its threshold, seeks a mate with probability <span class="m">sex</span> (1 in the ocean, 0.1 for protists, 0 for bacteria): one uniformly among those within reach, mature, off cooldown, with energy above half their threshold, and with developmental signatures within 10 bits. Otherwise it divides alone. Parents pay 0.55 and 0.15 of their thresholds (0.7 for fission); the child receives <span class="m">0.8 &times; payments &minus; 0.08 &times; its mass</span>, or is stillborn if that is not positive. Cooldown 20 ticks.</p>
+<h3>Inheritance</h3>
+<p>Fixed loci: one gamete per parent by Haldane meiosis (1 Morgan per chromosome) and point mutation at 0.0008 per locus. Gene lists: at most one crossover (probability 0.4) whose join is misaligned by one gene with probability 0.08; point mutation at 0.0008 per bit; duplication 0.004 and deletion 0.004 per gamete for the program, 0.006 each for neurons; insertion of a near-silent random neuron 0.02 per gamete.</p>
+<h3>Medium</h3>
+<p>Food regrows <span class="m">F &larr; F + 0.012 &middot; season &middot; regrow &middot; (fertility &minus; F)</span>; detritus remineralises at 0.004 per tick into food; in still media food diffuses with coefficient 0.12 and no flux into walls. Deaths deposit 0.5 &times; mass (half that after a kill) plus remaining energy as detritus.</p>
+<h3>Fluid</h3>
+<p>Stam's stable fluids: forcing from a stream function <span class="m">&psi; = F sin(kX + g_x) sin(kY + g_y)</span> with k = 2 periods, amplitude 0.018 &times; strength &times; habitat flow; friction 0.02 per tick; semi-Lagrangian advection; 20 Jacobi iterations of a pressure projection whose Laplacian is the exact composition of the discrete divergence and gradient, wall rules included.</p>
+
+<h2>8. Habitats and presets</h2>
+<table>
+<tr><th>Preset</th><th>Vessel and medium</th><th>Founders</th></tr>
+<tr><td>Open ocean</td><td>torus, ridges and passes, upwelling, sun, seasons, sexual</td><td>3000, body plan</td></tr>
+<tr><td>Petri dish</td><td>dish radius 118, flow 0.12, regrowth 0.35, lamp</td><td>2000</td></tr>
+<tr><td>Range expansion</td><td>dish, agar (flow 0, viscosity 0.03, diffusion), regrowth 0.03, medium 1</td><td>60 bacterial cells in radius 3, two strains mixed</td></tr>
+<tr><td>Predator and prey</td><td>dish, flow 0.05, regrowth 0.5</td><td>1600, one in eight a raptorial predator</td></tr>
+<tr><td>With refuge</td><td>as above, columns 0 to 47 protect prey</td><td>as above</td></tr>
+<tr><td>MEGA-plate</td><td>slide, agar, viscosity 0.35, regrowth 0.3, toxin bands 0, 0.6, 1.4, 2.2, 3.0 toward the middle</td><td>600 bacterial cells at both ends</td></tr>
+<tr><td>Phototaxis</td><td>slide, flow 0.04, regrowth 0.05, medium 0.35, light rising as the square of position</td><td>1500 green swimmers, weak cytostome</td></tr>
+<tr><td>Serial transfer</td><td>dish, flow 0.12, regrowth 0.02, a tenth kept every 600 ticks</td><td>1500 bacterial cells</td></tr>
+</table>
+
+<h2>9. Limits</h2>
+<ul>
+  <li>No physical units: energy, time and distance are model units. Rates were chosen so behaviour shows within minutes of running; none is fitted to an organism.</li>
+  <li>The world is two-dimensional; 3D bodies swim in a plane.</li>
+  <li>Bodies are bounded by a scratch grid (31 cells each way in 2D, 15 in 3D), programs by 48 genes and networks by 32 neurons per haplotype.</li>
+  <li>Algae are a field; bacteria that remineralise detritus are implicit.</li>
+  <li>The presets aim at the qualitative outcome of their experiments. Quantitative replication would need calibration of rates to the organisms used.</li>
+</ul>
+
+<h2>References</h2>
+<ul class="dim">
+  <li>Baym, Lieberman, Chase, Gross and Kishony (2016). Spatiotemporal microbial evolution on antibiotic landscapes. Science 353: 1147.</li>
+  <li>Gause (1934). The Struggle for Existence. Williams and Wilkins.</li>
+  <li>Grimm et al. (2006, 2010, 2020). The ODD protocol for describing individual-based and agent-based models. Ecological Modelling 198, 221; JASSS 23(2).</li>
+  <li>Hallatschek, Hersen, Ramanathan and Nelson (2007). Genetic drift at expanding frontiers promotes gene segregation. PNAS 104: 19926.</li>
+  <li>Lenski, Rose, Simpson and Tadler (1991). Long-term experimental evolution in Escherichia coli. American Naturalist 138: 1315.</li>
+  <li>Stam (1999). Stable fluids. SIGGRAPH.</li>
+  <li>Stanley and Miikkulainen (2002). Evolving neural networks through augmenting topologies. Evolutionary Computation 10: 99.</li>
+</ul>
+</div>
+</body>
+</html>

@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 360" font-family="Inter, system-ui, sans-serif" font-size="12">
+<rect width="720" height="360" fill="#12161b"/>
+<line x1="64" y1="304.0" x2="704" y2="304.0" stroke="#222830"/>
+<text x="56" y="308.0" fill="#9a948a" text-anchor="end">0</text>
+<line x1="64" y1="233.0" x2="704" y2="233.0" stroke="#222830"/>
+<text x="56" y="237.0" fill="#9a948a" text-anchor="end">0.104</text>
+<line x1="64" y1="162.0" x2="704" y2="162.0" stroke="#222830"/>
+<text x="56" y="166.0" fill="#9a948a" text-anchor="end">0.208</text>
+<line x1="64" y1="91.0" x2="704" y2="91.0" stroke="#222830"/>
+<text x="56" y="95.0" fill="#9a948a" text-anchor="end">0.312</text>
+<line x1="64" y1="20.0" x2="704" y2="20.0" stroke="#222830"/>
+<text x="56" y="24.0" fill="#9a948a" text-anchor="end">0.415</text>
+<text x="64.0" y="322" fill="#9a948a" text-anchor="middle">0</text>
+<text x="224.0" y="322" fill="#9a948a" text-anchor="middle">3000</text>
+<text x="384.0" y="322" fill="#9a948a" text-anchor="middle">6000</text>
+<text x="544.0" y="322" fill="#9a948a" text-anchor="middle">9000</text>
+<text x="704.0" y="322" fill="#9a948a" text-anchor="middle">12000</text>
+<text x="384.0" y="346" fill="#9a948a" text-anchor="middle">tick</text>
+<text x="64" y="14" fill="#ece6da">Mean resistance</text>
+<polygon points="117.3,182.4 170.7,68.7 224.0,21.2 277.3,20.0 330.7,20.9 384.0,21.4 437.3,24.4 490.7,27.2 544.0,27.5 597.3,27.8 650.7,29.2 704.0,28.8 704.0,50.5 650.7,47.8 597.3,48.2 544.0,48.2 490.7,46.2 437.3,44.1 384.0,43.7 330.7,42.4 277.3,38.3 224.0,35.1 170.7,174.3 117.3,272.9" fill="#f2c46e" fill-opacity="0.15"/>
+<polyline points="117.3,214.7 170.7,117.6 224.0,29.7 277.3,30.5 330.7,31.6 384.0,33.0 437.3,35.3 490.7,36.4 544.0,37.7 597.3,38.7 650.7,40.6 704.0,41.4" fill="none" stroke="#f2c46e" stroke-width="2"/>
+<rect x="74" y="322" width="10" height="10" fill="#f2c46e"/>
+<text x="90" y="331" fill="#ece6da">antibiotic</text>
+<polygon points="117.3,300.0 170.7,297.9 224.0,296.0 277.3,294.8 330.7,294.6 384.0,296.0 437.3,297.8 490.7,299.6 544.0,300.5 597.3,301.5 650.7,301.7 704.0,301.9 704.0,302.4 650.7,302.2 597.3,302.2 544.0,302.3 490.7,302.4 437.3,302.3 384.0,302.2 330.7,302.2 277.3,302.1 224.0,301.6 170.7,301.8 117.3,302.2" fill="#6ec8ff" fill-opacity="0.15"/>
+<polyline points="117.3,301.2 170.7,300.7 224.0,300.4 277.3,300.4 330.7,300.5 384.0,300.8 437.3,301.3 490.7,301.7 544.0,301.7 597.3,302.0 650.7,302.0 704.0,302.1" fill="none" stroke="#6ec8ff" stroke-width="2"/>
+<rect x="244" y="322" width="10" height="10" fill="#6ec8ff"/>
+<text x="260" y="331" fill="#ece6da">no drug</text>
+</svg>

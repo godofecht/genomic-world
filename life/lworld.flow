@@ -113,7 +113,17 @@ struct LifeCfg {
     medium: f32,
     # chance that a breeder seeks a mate; otherwise it divides, as
     # bacteria do (1 in the ocean: always sexual)
-    sex: f32
+    sex: f32,
+    # Controls for experiments: the light-gradient sense reads zero; the
+    # evolved networks are computed and inherited but drive nothing; light
+    # is spread evenly; no toxin is laid down.
+    blind_light: bool,
+    net_inert: bool,
+    light_uniform: bool,
+    no_toxin: bool,
+    # founders take a marker group at random instead of by position, so
+    # the groups start well mixed
+    mix_groups: bool
 }
 
 export function cfg_default() -> LifeCfg {
@@ -124,7 +134,9 @@ export function cfg_default() -> LifeCfg {
         transfer_every: 0, transfer_keep: 0.05,
         founders: L_FOUNDERS, found_x: 0.0, found_y: 0.0, found_r: 0.0,
         groups: 8, founder_chloro: 0, founder_mouth: -1, founder_bacterial: false,
-        medium: 0.7, sex: 1.0
+        medium: 0.7, sex: 1.0,
+        blind_light: false, net_inert: false, light_uniform: false, no_toxin: false,
+        mix_groups: false
     }
 }
 
@@ -415,6 +427,7 @@ export function life_found(l: ptr<Life>) -> void {
                 best = k
             }
         }
+        if l.cfg.mix_groups { best = rng_below(&st, groups) }
         for b in 0 to 30 {
             let on: bool = ((mark[best] >> (b as u32)) & (1 as u32)) == (1 as u32)
             l_set_locus(l.genome, gb, LOC_MARK + b, on)
@@ -533,6 +546,8 @@ export function life_act(l: ptr<Life>) -> void {
     let toxin: ptr<f32> = l.toxin
     let day: f32 = l.daylight
     let visc: f32 = l.cfg.viscosity
+    let blind: bool = l.cfg.blind_light
+    let inert: bool = l.cfg.net_inert
     let thermal: bool = l.cfg.thermal
     let terrain: ptr<u8> = l.env.terrain
     let open: bool = l.env.passes_open
@@ -627,6 +642,7 @@ export function life_act(l: ptr<Life>) -> void {
         let ahead: i32 = cell_index(wrap_x(x + r * ch), wrap_y(y + r * sh))
         inp[6] = 4.0 * (l_light(day * lightmap[ahead], food[ahead], det[ahead])
                         - l_light(day * lightmap[here], food[here], det[here]))
+        if blind { inp[6] = 0.0 }
         inp[7] = mate_s
         let wu: f32 = fluid_u_at(fl, x, y)
         let wv: f32 = fluid_v_at(fl, x, y)
@@ -644,6 +660,10 @@ export function life_act(l: ptr<Life>) -> void {
         cr[i].h3 = hid[3]
         let extra: array<f32, 2> = [0.0, 0.0]
         brain_net(nets, i * NETX, inp, hid, nstate, i * NEUR_MAX, extra)
+        if inert {
+            extra[0] = 0.0
+            extra[1] = 0.0
+        }
         let turn: f32 = brain_turn(brain, i * BRAIN_W, inp, hid, extra[0])
         let thrust: f32 = brain_thrust(brain, i * BRAIN_W, inp, hid, extra[1])
         cr[i].turn = turn
