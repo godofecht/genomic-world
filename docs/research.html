@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FlowGenomics | Research areas</title>
+<meta name="description" content="Research areas in artificial life, evolutionary development, experimental ecology, and population genetics.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0b0d10;
+  --panel: #12161b;
+  --line: #222830;
+  --ink: #ece6da;
+  --dim: #9a948a;
+  --faint: #6b665f;
+  --accent: #f2c46e;
+  --max: 1080px;
+}
+:root[data-theme="light"] {
+  --bg: #f6f3ee;
+  --panel: #ffffff;
+  --line: #e2ddd4;
+  --ink: #1d1b18;
+  --dim: #5c574f;
+  --faint: #8d877d;
+  --accent: #a8731a;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f6f3ee;
+    --panel: #ffffff;
+    --line: #e2ddd4;
+    --ink: #1d1b18;
+    --dim: #5c574f;
+    --faint: #8d877d;
+    --accent: #a8731a;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.65 Inter, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.wrap { max-width: var(--max); margin: 0 auto; padding: 0 16px; }
+header { padding: 72px 0 28px; }
+h1 { font-size: 44px; line-height: 1.1; font-weight: 600; margin: 0 0 14px; letter-spacing: -0.01em; }
+.lede { font-size: 19px; color: var(--dim); max-width: 720px; margin: 0; }
+.links { margin-top: 22px; display: flex; gap: 18px; flex-wrap: wrap; font-size: 15px; }
+.hero { margin: 28px 0 8px; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: #000; }
+.hero video, .hero img { display: block; width: 100%; height: auto; }
+.caption { color: var(--faint); font-size: 13px; margin: 8px 0 0; }
+section { padding: 56px 0 8px; }
+h2 { font-size: 26px; font-weight: 600; margin: 0 0 14px; }
+h3 { font-size: 17px; font-weight: 600; margin: 0 0 6px; }
+p { margin: 0 0 14px; max-width: 760px; }
+.dim { color: var(--dim); }
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; margin-top: 22px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.card video, .card img { display: block; width: 100%; height: auto; background: #000; }
+.card .body { padding: 16px 18px 18px; }
+.card p { font-size: 15px; margin: 0 0 8px; }
+.cite { font-size: 13px; color: var(--faint); }
+.result { font-size: 14px; color: var(--dim); border-left: 2px solid var(--accent); padding-left: 10px; margin-top: 10px; }
+ul { padding-left: 20px; max-width: 760px; }
+li { margin: 0 0 8px; }
+pre {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 14px 16px; overflow-x: auto; font: 13.5px/1.6 "JetBrains Mono", ui-monospace, monospace;
+  color: var(--ink);
+}
+table { border-collapse: collapse; width: 100%; max-width: 760px; font-size: 14.5px; margin: 10px 0 14px; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--dim); font-weight: 500; }
+td.k { font-family: "JetBrains Mono", ui-monospace, monospace; color: var(--accent); white-space: nowrap; }
+footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
+@media (max-width: 760px) {
+  header { padding-top: 44px; }
+  h1 { font-size: 34px; }
+  .lede { font-size: 17px; }
+  .grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+.site-nav { display:flex; gap:8px 18px; flex-wrap:wrap; align-items:center; margin:20px 0 12px; padding:13px 0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); font-size:14px; }
+.site-nav a { color:var(--dim); }
+.site-nav a:hover, .site-nav a[aria-current="page"] { color:var(--accent); }
+.brand { color:var(--ink); font-weight:600; letter-spacing:.02em; text-decoration:none; }
+.eyebrow { color:var(--accent); font-size:12px; letter-spacing:.12em; text-transform:uppercase; margin:0 0 10px; }
+.page-footer { display:flex; gap:18px; flex-wrap:wrap; border-top:1px solid var(--line); }
+@media(max-width:760px){.site-nav{gap:8px 14px;font-size:13px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="masthead">
+  <a class="brand" href="index.html">FlowGenomics</a>
+  <nav class="site-nav" aria-label="Main navigation"><a href="index.html">Home</a><a href="research.html" aria-current="page">Research</a><a href="experiments.html">Experiments</a><a href="demos.html">Interactive models</a><a href="methods.html">Methods</a><a href="model.html">Model details</a><a href="methods.html#run">Run</a></nav>
+  <p class="eyebrow">Research areas</p>
+  <h1>Research</h1>
+  <p class="lede">The programme connects organism development, ecological experiments, and population genetics through computational models.</p>
+  
+</header>
+<section id="life-world">
+  <h2>Artificial life and evolutionary development</h2>
+  <p class="dim"><b>Life World</b> is a spatial model of organisms whose bodies, brains and ecological roles develop from inherited genomes.</p>
+  <p>Each organism is diploid. Its genome holds a developmental program, a brain and a set of morphological and physiological traits. A body grows from one cell by that program; the brain turns what it senses into turning and thrust; the body sets what it can eat, how fast it swims, how well it fights and what it costs to run. Organisms that gather enough energy breed, their genomes recombine and mutate, and lineages evolve.</p>
+  <p>What they become is left to evolution. The founders are a three-cell grazer. Predators, armour, eyes, photosynthesis, new body plans and longer developmental programs appear only if they evolve.</p>
+  <p class="dim">The companion Genomic World project studies population genetics and climate adaptation. Its test suite compares drift, mutation-selection balance, linkage decay, selection and fixation with theory.</p>
+</section>
+<section>
+  <h2>Pixels from the genome</h2>
+  <p>The default view draws the world straight from the grids the simulation keeps: each world cell takes its colour from its algae, detritus, flow and terrain, and each body cell is a square of its type's colour, laid out where the developmental program put it. Single cells are rasterised from their morphological genes. The frame is drawn at half size and scaled up by the GPU, so a full-screen frame takes about 12 ms. V switches to the smooth natural, bright-field and dark-field styles.</p>
+  <div class="grid">
+    <div class="card">
+      <video src="media/pixel_ocean.mp4" poster="media/pixel_ocean.png" autoplay muted loop playsinline></video>
+      <div class="body"><p>The ocean in pixels, following a predator.</p></div>
+    </div>
+    <div class="card">
+      <img src="media/pixel_morph.png" alt="Single-celled organisms rasterised from their genes in a petri dish" loading="lazy">
+      <div class="body"><p>A petri dish in morphology mode: outline, nucleus, eyespot, flagella and cilia, each from a gene.</p></div>
+    </div>
+  </div>
+</section>
+<section>
+  <h2>Evolved networks, and the rarest forms</h2>
+  <div class="hero">
+    <img src="media/network.png" alt="The inspector on a predator, showing its brain with three evolved neurons wired into turning and thrust, and the panel's commonest and rarest forms" loading="lazy">
+  </div>
+  <p class="caption">A followed predator at tick 6,000. Its brain: senses on the left, the fixed core, then three evolved neurons (rings coloured by activation), wired into turning and thrust. On the right, the commonest forms and the rarest, each held by one organism.</p>
+</section>
+<section>
+  <h2>Three ways to build an organism</h2>
+  <div class="grid">
+    <div class="card">
+      <img src="media/ocean_zoom.jpg" alt="Multicellular organisms of many body plans in the ocean, with the inspector open on a spiked predator" loading="lazy">
+      <div class="body">
+        <h3>Body plan</h3>
+        <p>Cells of eight types grow from a program of cell-identity genes for mouths, motors, eyes, armour, spikes, stores, and photosynthesis. Gene duplication can add identities to the program, within its 48-gene-per-haplotype storage limit.</p>
+      </div>
+    </div>
+    <div class="card">
+      <video src="media/morph_closeup.mp4" poster="media/dish_morph.jpg" autoplay muted loop playsinline></video>
+      <div class="body">
+        <h3>Morphology</h3>
+        <p>One cell built as a protist is. Size, shape, pigment, flagella, cilia, spines, membrane, eyespot, cytostome, raptorial organelles and chlorophyll are genes, and they set both how it looks and what it can do.</p>
+      </div>
+    </div>
+    <div class="card">
+      <img src="media/combined_3d.jpg" alt="Combined mode: multicellular 3D bodies seen in the 3D view" loading="lazy">
+      <div class="body">
+        <h3>Combined, in 3D</h3>
+        <p>The multicellular body, each cell sized, tinted and made better or worse at its job by the morphological genes. Bodies can grow in two dimensions or three.</p>
+      </div>
+    </div>
+    <div class="card">
+      <video src="media/dish_3d_orbit.mp4" poster="media/combined_3d.jpg" autoplay muted loop playsinline></video>
+      <div class="body">
+        <h3>2D and 3D views</h3>
+        <p>The 3D view ray-marches the terrain so ridges and dish walls stand up, and draws every body cell as a lit sphere. The camera orbits and follows.</p>
+      </div>
+    </div>
+  </div>
+</section>
+<section id="genomics">
+  <h2>Population genetics and climate adaptation</h2>
+  <p><b>Genomic World</b> simulates individuals in space and tracks ecological and evolutionary change. Diploid populations forage, reproduce and evolve on a 256 by 256 torus with a latitudinal temperature gradient. Each genome carries 128 loci across four chromosomes, with recombination and mutation.</p>
+  <p>The model tracks allele frequencies, marker heterozygosity, regional F<sub>ST</sub>, adaptation to local temperature, heritability, dispersal and genetic load. Its experiments vary mutation rate, climate, population bottlenecks and mountain passes.</p>
+  <p><a href="https://github.com/godofecht/genomic-world">Read the Genomic World source and run instructions on GitHub</a>.</p>
+</section>
+<footer class="page-footer"><span>FlowGenomics</span><a href="https://github.com/godofecht/genomic-world">Source code</a><a href="data/README.md">Data and citations</a></footer>
+</div>
+</body>
+</html>

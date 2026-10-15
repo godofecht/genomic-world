@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FlowGenomics | Methods and scope</title>
+<meta name="description" content="Validation evidence, model methods, run instructions, and scope limits for FlowGenomics projects.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0b0d10;
+  --panel: #12161b;
+  --line: #222830;
+  --ink: #ece6da;
+  --dim: #9a948a;
+  --faint: #6b665f;
+  --accent: #f2c46e;
+  --max: 1080px;
+}
+:root[data-theme="light"] {
+  --bg: #f6f3ee;
+  --panel: #ffffff;
+  --line: #e2ddd4;
+  --ink: #1d1b18;
+  --dim: #5c574f;
+  --faint: #8d877d;
+  --accent: #a8731a;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f6f3ee;
+    --panel: #ffffff;
+    --line: #e2ddd4;
+    --ink: #1d1b18;
+    --dim: #5c574f;
+    --faint: #8d877d;
+    --accent: #a8731a;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.65 Inter, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.wrap { max-width: var(--max); margin: 0 auto; padding: 0 16px; }
+header { padding: 72px 0 28px; }
+h1 { font-size: 44px; line-height: 1.1; font-weight: 600; margin: 0 0 14px; letter-spacing: -0.01em; }
+.lede { font-size: 19px; color: var(--dim); max-width: 720px; margin: 0; }
+.links { margin-top: 22px; display: flex; gap: 18px; flex-wrap: wrap; font-size: 15px; }
+.hero { margin: 28px 0 8px; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: #000; }
+.hero video, .hero img { display: block; width: 100%; height: auto; }
+.caption { color: var(--faint); font-size: 13px; margin: 8px 0 0; }
+section { padding: 56px 0 8px; }
+h2 { font-size: 26px; font-weight: 600; margin: 0 0 14px; }
+h3 { font-size: 17px; font-weight: 600; margin: 0 0 6px; }
+p { margin: 0 0 14px; max-width: 760px; }
+.dim { color: var(--dim); }
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; margin-top: 22px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.card video, .card img { display: block; width: 100%; height: auto; background: #000; }
+.card .body { padding: 16px 18px 18px; }
+.card p { font-size: 15px; margin: 0 0 8px; }
+.cite { font-size: 13px; color: var(--faint); }
+.result { font-size: 14px; color: var(--dim); border-left: 2px solid var(--accent); padding-left: 10px; margin-top: 10px; }
+ul { padding-left: 20px; max-width: 760px; }
+li { margin: 0 0 8px; }
+pre {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 14px 16px; overflow-x: auto; font: 13.5px/1.6 "JetBrains Mono", ui-monospace, monospace;
+  color: var(--ink);
+}
+table { border-collapse: collapse; width: 100%; max-width: 760px; font-size: 14.5px; margin: 10px 0 14px; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--dim); font-weight: 500; }
+td.k { font-family: "JetBrains Mono", ui-monospace, monospace; color: var(--accent); white-space: nowrap; }
+footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
+@media (max-width: 760px) {
+  header { padding-top: 44px; }
+  h1 { font-size: 34px; }
+  .lede { font-size: 17px; }
+  .grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+.site-nav { display:flex; gap:8px 18px; flex-wrap:wrap; align-items:center; margin:20px 0 12px; padding:13px 0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); font-size:14px; }
+.site-nav a { color:var(--dim); }
+.site-nav a:hover, .site-nav a[aria-current="page"] { color:var(--accent); }
+.brand { color:var(--ink); font-weight:600; letter-spacing:.02em; text-decoration:none; }
+.eyebrow { color:var(--accent); font-size:12px; letter-spacing:.12em; text-transform:uppercase; margin:0 0 10px; }
+.page-footer { display:flex; gap:18px; flex-wrap:wrap; border-top:1px solid var(--line); }
+@media(max-width:760px){.site-nav{gap:8px 14px;font-size:13px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="masthead">
+  <a class="brand" href="index.html">FlowGenomics</a>
+  <nav class="site-nav" aria-label="Main navigation"><a href="index.html">Home</a><a href="research.html">Research</a><a href="experiments.html">Experiments</a><a href="demos.html">Interactive models</a><a href="methods.html" aria-current="page">Methods</a><a href="model.html">Model details</a><a href="methods.html#run">Run</a></nav>
+  <p class="eyebrow">Methods and reproducibility</p>
+  <h1>Methods, evidence, and scope</h1>
+  <p class="lede">Find the validation results, implementation notes, run commands, and the limits that shape interpretation.</p>
+  
+</header>
+<section id="evidence">
+  <h2>Model validation and evidence</h2>
+  <p>Each experiment runs a treatment and its controls from the same seeds (5 replicates; 8 for the refuge), and reports each outcome as a mean with a 95% confidence interval, and the difference between arms with a 95% Welch interval. Run any of them with <code>./run.sh experiment NAME</code>; the full model is in the <a href="model.html">model description</a>.</p>
+  <table>
+    <tr><th>Experiment</th><th>Treatment</th><th>Control</th><th>Difference (95% CI)</th></tr>
+    <tr><td>Range expansion: local over global heterozygosity, agar against stirred liquid</td><td>0.058</td><td>0.935</td><td>&minus;0.877 (&minus;0.929 to &minus;0.825)</td></tr>
+    <tr><td>MEGA-plate: mean resistance, drug against none</td><td>0.387</td><td>0.003</td><td>0.384 (0.368 to 0.399)</td></tr>
+    <tr><td>Predator and prey: prey alive, no refuge against refuge</td><td>35</td><td>2,204</td><td>&minus;2,168 (&minus;2,302 to &minus;2,034)</td></tr>
+    <tr><td>Phototaxis: mean position, gradient against even light</td><td>158.5</td><td>128.3</td><td>30.2 (15.3 to 45.0)</td></tr>
+    <tr><td>Phototaxis: mean position, gradient against blinded sense</td><td>158.5</td><td>160.3</td><td>&minus;1.8 (&minus;19.4 to 15.8)</td></tr>
+    <tr><td>Networks: mean evolved neurons, active against inert</td><td>2.75</td><td>3.40</td><td>&minus;0.65 (&minus;2.11 to 0.81)</td></tr>
+  </table>
+  <p>Two earlier claims from single runs did not survive their controls and are withdrawn: that cells steer toward the light, and that larger networks were being selected.</p>
+  <div class="grid">
+    <div class="card"><img src="media/exp_range.svg" alt="Local heterozygosity falling on agar and staying near one in liquid" loading="lazy"><div class="body"><p>Range expansion. Lines are means over replicates; bands span the lowest to the highest replicate.</p></div></div>
+    <div class="card"><img src="media/exp_megaplate.svg" alt="Mean resistance rising under the drug and staying near zero without" loading="lazy"><div class="body"><p>MEGA-plate.</p></div></div>
+    <div class="card"><img src="media/exp_refuge.svg" alt="Prey numbers with and without a refuge" loading="lazy"><div class="body"><p>Predator and prey: prey alive, with and without a refuge.</p></div></div>
+    <div class="card"><img src="media/exp_phototaxis.svg" alt="Mean position along the slide for gradient, even light and blinded arms" loading="lazy"><div class="body"><p>Phototaxis: the gradient and blinded arms overlap.</p></div></div>
+    <div class="card"><img src="media/exp_networks.svg" alt="Mean evolved neurons growing alike in active and inert arms" loading="lazy"><div class="body"><p>Evolved networks: active and inert grow alike.</p></div></div>
+  </div>
+</section>
+<section>
+  <h2>How it works</h2>
+  <ul>
+    <li><b>Genome.</b> 640 fixed loci per haplotype on twenty chromosomes, recombining by Haldane's map, plus a developmental program of cell-identity genes. Programs cross over at most once per meiosis, sometimes misaligned by a gene, which duplicates or deletes one, as unequal crossing-over does.</li>
+    <li><b>Development.</b> Bodies grow cell by cell in 2D or 3D and are mirrored across the midline. A gene that grows its own identity repeats a segment; a timer stops it. Random programs grow bodies of up to 8,965 cells in tests.</li>
+    <li><b>Brain.</b> A fixed genetic core (ten senses, four self-feeding hidden neurons, turning and thrust) and an evolved network on top: one gene per neuron, with its activation (tanh, logistic, rectifier or sine), bias, self-connection, three incoming connections and its pull on the outputs. Neurons are inserted, duplicated, deleted and rewired, so the network's size and wiring evolve. Founders have none. In a 30,000-tick ocean run the mean network grew to 11.6 neurons, the largest to 18. A control with inert networks grows them just as large, so this growth is mutation pressure.</li>
+    <li><b>Ecology.</b> Grazing on algae that regrow; photosynthesis that shares light and draws nutrient; detritus that is scavenged and returned to the water as nutrient; predation by attack against defence; toxin and the cost of resisting it.</li>
+    <li><b>Water.</b> Stam's stable fluids on a 128 by 128 grid with walls; organisms drift with the current and swim against drag that depends on body shape.</li>
+    <li><b>Determinism.</b> Every random draw is a hash of an organism's seed, the tick and a purpose, so runs give the same state on any number of threads.</li>
+    <li><b>Viewer.</b> A software renderer in Flow, shown full screen through Core Animation at the panel's native resolution, with CoreText type. Natural colour, bright-field and dark-field styles. An inspector shows a followed organism's brain at work and its developmental program gene by gene.</li>
+  </ul>
+</section>
+<section id="run">
+  <h2>Run it</h2>
+  <p>Needs Flow 2.0 with the flowc C backend, a C11 compiler, and macOS for the window and the renderer's typography. Homebrew libomp makes the parallel loops use every core.</p>
+<pre>./run.sh life         the life world, full screen
+./run.sh life-bench   headless: forms, trophic roles, energy, selection
+./run.sh shot         headless renders (settings in life_shot.flow)
+./run.sh test         tests, determinism, validation against theory
+./run.sh              the Genomic World</pre>
+  <table>
+    <tr><th>Key</th><th>Action</th></tr>
+    <tr><td class="k">Tab</td><td>Choose a world: preset, mode, 2D or 3D bodies</td></tr>
+    <tr><td class="k">Space</td><td>Pause</td></tr>
+    <tr><td class="k">[ ]</td><td>Fewer or more ticks per frame</td></tr>
+    <tr><td class="k">wheel, drag</td><td>Zoom and pan; in 3D, right-drag turns</td></tr>
+    <tr><td class="k">click</td><td>Follow an organism; Esc lets go</td></tr>
+    <tr><td class="k">3</td><td>2D or 3D view</td></tr>
+    <tr><td class="k">V</td><td>Pixels, natural, bright-field or dark-field</td></tr>
+    <tr><td class="k">F</td><td>Show the flow</td></tr>
+    <tr><td class="k">G</td><td>Quality: fast, balanced or full resolution</td></tr>
+    <tr><td class="k">H</td><td>Every key</td></tr>
+  </table>
+</section>
+<section id="limits">
+  <h2>Model scope</h2>
+  <ul>
+    <li>Life World uses model cells, dimensionless rates and energy constants. Its ticks have no species-calibrated duration.</li>
+    <li>Body development uses finite scratch grids, a 32,768-cell working list and a 48-gene-per-haplotype program allocation. Energy, upkeep and drag also limit viable body size.</li>
+    <li>The environment and movement are two-dimensional. The 3D option changes body geometry while organisms remain in the plane.</li>
+    <li>Survival and reproduction create emergent selection through the energy budget. The census estimates selection differentials for measured traits. The LTEE transfer proxy has no fitted selection coefficient or fitted organism rates.</li>
+    <li>The archived LTEE competition data supports a separate descriptive fit, <code>w(t) = 1 + 0.02825 t^0.2988</code>, across 40 positive-generation bins from 500 to 50,000 generations. This fit describes the data and does not calibrate Life World.</li>
+    <li>The window and the typography are macOS only for now.</li>
+  </ul>
+</section>
+<footer class="page-footer"><span>FlowGenomics</span><a href="https://github.com/godofecht/genomic-world">Source code</a><a href="data/README.md">Data and citations</a></footer>
+</div>
+</body>
+</html>

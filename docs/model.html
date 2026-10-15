@@ -29,18 +29,28 @@ code, .m { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 14
 table { border-collapse: collapse; width: 100%; font-size: 14.5px; margin: 8px 0 16px; }
 th, td { text-align: left; padding: 6px 9px; border-bottom: 1px solid var(--line); vertical-align: top; }
 th { color: var(--dim); font-weight: 500; }
+
+.site-nav { display:flex; gap:8px 18px; flex-wrap:wrap; align-items:center; margin:20px 0 12px; padding:13px 0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); font-size:14px; }
+.site-nav a { color:var(--dim); }
+.site-nav a:hover, .site-nav a[aria-current="page"] { color:var(--accent); }
+.brand { color:var(--ink); font-weight:600; letter-spacing:.02em; text-decoration:none; }
+.eyebrow { color:var(--accent); font-size:12px; letter-spacing:.12em; text-transform:uppercase; margin:0 0 10px; }
+.page-footer { display:flex; gap:18px; flex-wrap:wrap; border-top:1px solid var(--line); }
+@media(max-width:760px){.site-nav{gap:8px 14px;font-size:13px}}
 </style>
 </head>
 <body>
 <div class="wrap">
 <header>
+  <a class="brand" href="index.html">FlowGenomics</a>
+  <nav class="site-nav" aria-label="Main navigation"><a href="index.html">Home</a><a href="research.html">Research</a><a href="experiments.html">Experiments</a><a href="demos.html">Interactive models</a><a href="methods.html">Methods</a><a href="model.html" aria-current="page">Model details</a><a href="methods.html#run">Run</a></nav>
   <h1>Life World: the model</h1>
   <p class="dim">Described in the ODD protocol (Overview, Design concepts, Details) of Grimm et al. (2006, 2010, 2020). Every value below is the one in the code; file names point to where it lives. <a href="index.html">FlowGenomics</a>.</p>
 </header>
 
 <h2>1. Purpose and patterns</h2>
 <p>The model asks how bodies, behaviour and ecological roles evolve when organism traits follow from inherited, recombined and mutated genomes, under an energy budget in a moving environment. The laboratory presets are simplified experimental analogues. Their units and rates are model-specific.</p>
-<p>Patterns the model is expected to reproduce, tested by replicated, controlled runs (<code>./run.sh experiment</code>; results on the <a href="index.html#evidence">project page</a>):</p>
+<p>Patterns the model is expected to reproduce, tested by replicated, controlled runs (<code>./run.sh experiment</code>; results on the <a href="methods.html#evidence">methods page</a>):</p>
 <ul>
   <li>Segregation of neutral strains by drift at the edge of an expanding colony, absent in a mixed culture (Hallatschek et al. 2007).</li>
   <li>Predator and prey both going extinct in a small homogeneous vessel, and prey persisting where a refuge protects them (Gause 1934).</li>

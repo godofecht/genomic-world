@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FlowGenomics | Computational Evolution</title>
-<meta name="description" content="FlowGenomics studies evolution, ecology and population genetics through computational models and controlled experiments.">
+<title>FlowGenomics | Computational evolution</title>
+<meta name="description" content="Computational research in evolution, ecology, development, and population genetics.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
@@ -87,245 +87,53 @@ footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
   .lede { font-size: 17px; }
   .grid { grid-template-columns: minmax(0, 1fr); }
 }
+
+.site-nav { display:flex; gap:8px 18px; flex-wrap:wrap; align-items:center; margin:20px 0 12px; padding:13px 0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); font-size:14px; }
+.site-nav a { color:var(--dim); }
+.site-nav a:hover, .site-nav a[aria-current="page"] { color:var(--accent); }
+.brand { color:var(--ink); font-weight:600; letter-spacing:.02em; text-decoration:none; }
+.eyebrow { color:var(--accent); font-size:12px; letter-spacing:.12em; text-transform:uppercase; margin:0 0 10px; }
+.page-footer { display:flex; gap:18px; flex-wrap:wrap; border-top:1px solid var(--line); }
+@media(max-width:760px){.site-nav{gap:8px 14px;font-size:13px}}
 </style>
 </head>
 <body>
 <div class="wrap">
-
-<header>
+<header class="masthead">
+  <a class="brand" href="index.html">FlowGenomics</a>
+  <nav class="site-nav" aria-label="Main navigation"><a href="index.html" aria-current="page">Home</a><a href="research.html">Research</a><a href="experiments.html">Experiments</a><a href="demos.html">Interactive models</a><a href="methods.html">Methods</a><a href="model.html">Model details</a><a href="methods.html#run">Run</a></nav>
+  <p class="eyebrow">Independent computational research</p>
   <h1>FlowGenomics</h1>
-  <p class="lede">I lead FlowGenomics, an independent computational research lab studying how genomes, organisms and environments shape evolution.</p>
-  <div class="links">
-    <a href="#research">Research areas</a>
-    <a href="#experiments">Experiments</a>
-    <a href="demos.html">Interactive models</a>
-    <a href="#evidence">Methods and evidence</a>
-    <a href="https://github.com/godofecht/genomic-world">Source code</a>
-    <a href="#run">Run the models</a>
-    <a href="model.html">Model description</a>
-    <a href="#limits">Model scope</a>
-  </div>
-  <div class="hero">
-    <video src="media/ocean_follow.mp4" poster="media/ocean_zoom.jpg" autoplay muted loop playsinline></video>
-  </div>
-  <p class="caption">The open ocean, following one organism. Motors beat their flagella, eyes look ahead, spikes point out. Specks are marine snow carried by the currents.</p>
+  <p class="lede">Models and experiments on how genomes, organisms, and environments shape evolution.</p>
+  <div class="hero"><video src="media/ocean_follow.mp4" poster="media/ocean_zoom.jpg" autoplay muted loop playsinline></video></div><p class="caption">An organism moving through the simulated open ocean.</p>
 </header>
 
 <section id="research">
-  <h2>Research areas</h2>
-  <p>FlowGenomics brings together work on evolving organisms, experimental ecology and population genetics. Each area has a model, questions and results that can be inspected in the code.</p>
+  <h2>Research programme</h2>
+  <p>Computational work on how genomes, organisms and environments shape evolution. The projects below use distinct models and report their scope and evidence on dedicated pages.</p>
   <div class="grid">
-    <a class="card" href="#life-world"><div class="body"><h3>Artificial life and evolutionary development</h3><p>How inherited programs build bodies and brains, and how ecological interactions shape the forms that evolve.</p><p class="cite">Project: Life World</p></div></a>
-    <a class="card" href="#experiments"><div class="body"><h3>Experimental evolution and microbial ecology</h3><p>Spatial range expansion, antibiotic resistance, predator and prey, light response, and transfer bottlenecks. LTEE fitness measurements provide a separate empirical reference.</p><p class="cite">Project: controlled ecological experiments</p></div></a>
-    <a class="card" href="#genomics"><div class="body"><h3>Population genetics and climate adaptation</h3><p>How mutation, recombination, selection, drift and dispersal shape genetic variation across changing environments.</p><p class="cite">Project: Genomic World</p></div></a>
-    <a class="card" href="#evidence"><div class="body"><h3>Model validation and scientific computing</h3><p>Replicated controls, deterministic runs and comparisons with population-genetic theory.</p><p class="cite">Methods across both simulation projects</p></div></a>
+    <a class="card" href="research.html#life-world"><div class="body"><h3>Artificial life and development</h3><p>How inherited programs build bodies and brains, and how ecological interactions shape evolving forms.</p><p class="cite">Life World</p></div></a>
+    <a class="card" href="experiments.html#experiments"><div class="body"><h3>Experimental evolution</h3><p>Model studies of range expansion, antibiotic resistance, predator and prey, phototaxis, and transfer bottlenecks.</p><p class="cite">Experiments and controls</p></div></a>
+    <a class="card" href="research.html#genomics"><div class="body"><h3>Population genetics</h3><p>Mutation, recombination, drift, selection, dispersal, and adaptation across changing environments.</p><p class="cite">Genomic World</p></div></a>
+    <a class="card" href="methods.html#evidence"><div class="body"><h3>Methods and evidence</h3><p>Replicated comparisons, model scope, and links to data and source code.</p><p class="cite">Methods across the projects</p></div></a>
   </div>
 </section>
-
-<section id="life-world">
-  <h2>Artificial life and evolutionary development</h2>
-  <p class="dim"><b>Life World</b> is a spatial model of organisms whose bodies, brains and ecological roles develop from inherited genomes.</p>
-  <p>Each organism is diploid. Its genome holds a developmental program, a brain and a set of morphological and physiological traits. A body grows from one cell by that program; the brain turns what it senses into turning and thrust; the body sets what it can eat, how fast it swims, how well it fights and what it costs to run. Organisms that gather enough energy breed, their genomes recombine and mutate, and lineages evolve.</p>
-  <p>What they become is left to evolution. The founders are a three-cell grazer. Predators, armour, eyes, photosynthesis, new body plans and longer developmental programs appear only if they evolve.</p>
-  <p class="dim">The companion Genomic World project studies population genetics and climate adaptation. Its test suite compares drift, mutation-selection balance, linkage decay, selection and fixation with theory.</p>
-</section>
-
 <section>
-  <h2>Pixels from the genome</h2>
-  <p>The default view draws the world straight from the grids the simulation keeps: each world cell takes its colour from its algae, detritus, flow and terrain, and each body cell is a square of its type's colour, laid out where the developmental program put it. Single cells are rasterised from their morphological genes. The frame is drawn at half size and scaled up by the GPU, so a full-screen frame takes about 12 ms. V switches to the smooth natural, bright-field and dark-field styles.</p>
+  <h2>Explore the work</h2>
   <div class="grid">
-    <div class="card">
-      <video src="media/pixel_ocean.mp4" poster="media/pixel_ocean.png" autoplay muted loop playsinline></video>
-      <div class="body"><p>The ocean in pixels, following a predator.</p></div>
-    </div>
-    <div class="card">
-      <img src="media/pixel_morph.png" alt="Single-celled organisms rasterised from their genes in a petri dish" loading="lazy">
-      <div class="body"><p>A petri dish in morphology mode: outline, nucleus, eyespot, flagella and cilia, each from a gene.</p></div>
-    </div>
+    <a class="card" href="experiments.html"><div class="body"><h3>Experiment catalogue</h3><p>Read the question, model setup, controls, and reported result for each experiment.</p></div></a>
+    <a class="card" href="demos.html"><div class="body"><h3>Interactive models</h3><p>Adjust conditions in small browser models and watch the population response.</p></div></a>
+    <a class="card" href="model.html"><div class="body"><h3>Life World model description</h3><p>Review the model's entities, processes, parameters, and limitations.</p></div></a>
+    <a class="card" href="methods.html#run"><div class="body"><h3>Run the models</h3><p>Find the commands, controls, validation results, and source repository.</p></div></a>
   </div>
 </section>
-
-<section>
-  <h2>Evolved networks, and the rarest forms</h2>
-  <div class="hero">
-    <img src="media/network.png" alt="The inspector on a predator, showing its brain with three evolved neurons wired into turning and thrust, and the panel's commonest and rarest forms" loading="lazy">
-  </div>
-  <p class="caption">A followed predator at tick 6,000. Its brain: senses on the left, the fixed core, then three evolved neurons (rings coloured by activation), wired into turning and thrust. On the right, the commonest forms and the rarest, each held by one organism.</p>
+<section id="ltee-reference">
+  <h2>Empirical reference</h2>
+  <p>The LTEE analysis summarizes published E. coli fitness measurements across 50,000 generations. Its fitted curve is a descriptive reference. Life World's organism rates remain uncalibrated to E. coli.</p>
+  <p><a href="data/ltee-fitness.csv">Source measurements</a> · <a href="data/ltee-fitness-mean.csv">Binned means</a> · <a href="data/README.md">Analysis method and citation</a></p>
 </section>
 
-<section>
-  <h2>Three ways to build an organism</h2>
-  <div class="grid">
-    <div class="card">
-      <img src="media/ocean_zoom.jpg" alt="Multicellular organisms of many body plans in the ocean, with the inspector open on a spiked predator" loading="lazy">
-      <div class="body">
-        <h3>Body plan</h3>
-        <p>Cells of eight types grown from a program of cell-identity genes: mouths, motors, eyes, armour, spikes, stores, photosynthetic cells. Genes duplicate and diverge, so the number of cell kinds is open.</p>
-      </div>
-    </div>
-    <div class="card">
-      <video src="media/morph_closeup.mp4" poster="media/dish_morph.jpg" autoplay muted loop playsinline></video>
-      <div class="body">
-        <h3>Morphology</h3>
-        <p>One cell built as a protist is. Size, shape, pigment, flagella, cilia, spines, membrane, eyespot, cytostome, raptorial organelles and chlorophyll are genes, and they set both how it looks and what it can do.</p>
-      </div>
-    </div>
-    <div class="card">
-      <img src="media/combined_3d.jpg" alt="Combined mode: multicellular 3D bodies seen in the 3D view" loading="lazy">
-      <div class="body">
-        <h3>Combined, in 3D</h3>
-        <p>The multicellular body, each cell sized, tinted and made better or worse at its job by the morphological genes. Bodies can grow in two dimensions or three.</p>
-      </div>
-    </div>
-    <div class="card">
-      <video src="media/dish_3d_orbit.mp4" poster="media/combined_3d.jpg" autoplay muted loop playsinline></video>
-      <div class="body">
-        <h3>2D and 3D views</h3>
-        <p>The 3D view ray-marches the terrain so ridges and dish walls stand up, and draws every body cell as a lit sphere. The camera orbits and follows.</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section id="experiments">
-  <h2>Experimental evolution and microbial ecology</h2>
-  <p>The open ocean has gyres around ridges, upwelling that drifts, day and night. The laboratory presets are simplified versions of published experiments, so a run can be compared with the reported patterns. <a href="demos.html">Interactive browser models</a> let readers explore selected mechanisms.</p>
-  <div class="grid">
-    <div class="card">
-      <video src="media/range_timelapse.mp4" poster="media/range.jpg" autoplay muted loop playsinline></video>
-      <div class="body">
-        <h3>Range expansion on agar</h3>
-        <p>Two neutral strains spread from a drop. Cells hardly move on agar, so the colony grows at its edge, where few cells found each new patch.</p>
-        <p class="cite">Hallatschek, Hersen, Ramanathan and Nelson (2007), Genetic drift at expanding frontiers promotes gene segregation. PNAS 104: 19926.</p>
-        <p class="result">The strains separate into sectors at the edge by drift alone: local heterozygosity falls to 0.06 of the global value, against 0.94 in a stirred culture.</p>
-      </div>
-    </div>
-    <div class="card">
-      <video src="media/megaplate_timelapse.mp4" poster="media/megaplate.jpg" autoplay muted loop playsinline></video>
-      <div class="body">
-        <h3>MEGA-plate</h3>
-        <p>A long plate with antibiotic in bands rising toward the middle, inoculated at both ends, under bright-field.</p>
-        <p class="cite">Baym, Lieberman, Chase, Gross and Kishony (2016), Spatiotemporal microbial evolution on antibiotic landscapes. Science 353: 1147.</p>
-        <p class="result">Mean resistance reaches 0.39 with the drug and stays at 0.003 without it, over 5 replicates; every drug replicate reaches the highest band.</p>
-      </div>
-    </div>
-    <div class="card">
-      <img src="media/refuge_dark.jpg" alt="Dark-field view of prey crowded into a sediment refuge at the left, predators in the open dish" loading="lazy">
-      <div class="body">
-        <h3>Predator and prey, with a refuge</h3>
-        <p>A raptorial predator and its prey in a small dish, in dark-field. In one version, sediment at the left edge hides prey.</p>
-        <p class="cite">Gause (1934), The Struggle for Existence.</p>
-        <p class="result">Over 8 replicates, prey persist with the refuge in every dish (about 2,200 each). Without it, prey and predator both die out in 2 dishes, as in Gause's, prey die out alone in 2, and a remnant of prey holds on in 4.</p>
-      </div>
-    </div>
-    <div class="card">
-      <img src="media/phototaxis.jpg" alt="A microscope slide lit from the right, with green cells gathered toward the lamp" loading="lazy">
-      <div class="body">
-        <h3>Phototaxis on a slide</h3>
-        <p>A slide lit from one end, on poor medium. Cells can sense the light gradient along their heading.</p>
-        <p class="result">Cells gather toward the lamp (mean position 158 against 128 under even light). Blinding the light sense changes nothing. The gathering comes from growth where light is strong; steering adds nothing measurable.</p>
-      </div>
-    </div>
-    <div class="card">
-      <img src="media/ocean.jpg" alt="The whole ocean world with ridges, passes and thousands of organisms" loading="lazy">
-      <div class="body">
-        <h3>Open ocean</h3>
-        <p>A 2D incompressible flow drives food and drifters around ridges and through passes; current strength cycles and the upwelling moves, so what a body needs keeps changing.</p>
-        <p class="result">Predators appear within 2,000 ticks and settle between 2 and 16 percent of the population.</p>
-      </div>
-    </div>
-    <div class="card">
-      <img src="media/dish_morph.jpg" alt="A petri dish of single-celled organisms, with the inspector showing trait bars and the brain" loading="lazy">
-      <div class="body">
-        <h3>Petri dish and transfer bottlenecks</h3>
-        <p>The exploratory preset retains one tenth of the population every 600 model ticks. The LTEE transfer proxy retains one percent and resets abstract food. It does not model the dilution volume, DM25 medium or daily growth curve.</p>
-        <p class="cite">The LTEE uses a 1:100 daily dilution in DM25, as described in this <a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC5607360/">protocol review</a>. This preset currently represents the bottleneck only.</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section id="genomics">
-  <h2>Population genetics and climate adaptation</h2>
-  <p><b>Genomic World</b> simulates individuals in space and tracks ecological and evolutionary change. Diploid populations forage, reproduce and evolve on a 256 by 256 torus with a latitudinal temperature gradient. Each genome carries 128 loci across four chromosomes, with recombination and mutation.</p>
-  <p>The model tracks allele frequencies, marker heterozygosity, regional F<sub>ST</sub>, adaptation to local temperature, heritability, dispersal and genetic load. Its experiments vary mutation rate, climate, population bottlenecks and mountain passes.</p>
-  <p><a href="https://github.com/godofecht/genomic-world">Read the Genomic World source and run instructions on GitHub</a>.</p>
-</section>
-
-<section id="evidence">
-  <h2>Model validation and evidence</h2>
-  <p>Each experiment runs a treatment and its controls from the same seeds (5 replicates; 8 for the refuge), and reports each outcome as a mean with a 95% confidence interval, and the difference between arms with a 95% Welch interval. Run any of them with <code>./run.sh experiment NAME</code>; the full model is in the <a href="model.html">model description</a>.</p>
-  <table>
-    <tr><th>Experiment</th><th>Treatment</th><th>Control</th><th>Difference (95% CI)</th></tr>
-    <tr><td>Range expansion: local over global heterozygosity, agar against stirred liquid</td><td>0.058</td><td>0.935</td><td>&minus;0.877 (&minus;0.929 to &minus;0.825)</td></tr>
-    <tr><td>MEGA-plate: mean resistance, drug against none</td><td>0.387</td><td>0.003</td><td>0.384 (0.368 to 0.399)</td></tr>
-    <tr><td>Predator and prey: prey alive, no refuge against refuge</td><td>35</td><td>2,204</td><td>&minus;2,168 (&minus;2,302 to &minus;2,034)</td></tr>
-    <tr><td>Phototaxis: mean position, gradient against even light</td><td>158.5</td><td>128.3</td><td>30.2 (15.3 to 45.0)</td></tr>
-    <tr><td>Phototaxis: mean position, gradient against blinded sense</td><td>158.5</td><td>160.3</td><td>&minus;1.8 (&minus;19.4 to 15.8)</td></tr>
-    <tr><td>Networks: mean evolved neurons, active against inert</td><td>2.75</td><td>3.40</td><td>&minus;0.65 (&minus;2.11 to 0.81)</td></tr>
-  </table>
-  <p>Two earlier claims from single runs did not survive their controls and are withdrawn: that cells steer toward the light, and that larger networks were being selected.</p>
-  <div class="grid">
-    <div class="card"><img src="media/exp_range.svg" alt="Local heterozygosity falling on agar and staying near one in liquid" loading="lazy"><div class="body"><p>Range expansion. Lines are means over replicates; bands span the lowest to the highest replicate.</p></div></div>
-    <div class="card"><img src="media/exp_megaplate.svg" alt="Mean resistance rising under the drug and staying near zero without" loading="lazy"><div class="body"><p>MEGA-plate.</p></div></div>
-    <div class="card"><img src="media/exp_refuge.svg" alt="Prey numbers with and without a refuge" loading="lazy"><div class="body"><p>Predator and prey: prey alive, with and without a refuge.</p></div></div>
-    <div class="card"><img src="media/exp_phototaxis.svg" alt="Mean position along the slide for gradient, even light and blinded arms" loading="lazy"><div class="body"><p>Phototaxis: the gradient and blinded arms overlap.</p></div></div>
-    <div class="card"><img src="media/exp_networks.svg" alt="Mean evolved neurons growing alike in active and inert arms" loading="lazy"><div class="body"><p>Evolved networks: active and inert grow alike.</p></div></div>
-  </div>
-</section>
-
-<section>
-  <h2>How it works</h2>
-  <ul>
-    <li><b>Genome.</b> 640 fixed loci per haplotype on twenty chromosomes, recombining by Haldane's map, plus a developmental program of cell-identity genes. Programs cross over at most once per meiosis, sometimes misaligned by a gene, which duplicates or deletes one, as unequal crossing-over does.</li>
-    <li><b>Development.</b> Bodies grow cell by cell in 2D or 3D and are mirrored across the midline. A gene that grows its own identity repeats a segment; a timer stops it. Random programs grow bodies of up to 8,965 cells in tests.</li>
-    <li><b>Brain.</b> A fixed genetic core (ten senses, four self-feeding hidden neurons, turning and thrust) and an evolved network on top: one gene per neuron, with its activation (tanh, logistic, rectifier or sine), bias, self-connection, three incoming connections and its pull on the outputs. Neurons are inserted, duplicated, deleted and rewired, so the network's size and wiring evolve. Founders have none. In a 30,000-tick ocean run the mean network grew to 11.6 neurons, the largest to 18. A control with inert networks grows them just as large, so this growth is mutation pressure.</li>
-    <li><b>Ecology.</b> Grazing on algae that regrow; photosynthesis that shares light and draws nutrient; detritus that is scavenged and returned to the water as nutrient; predation by attack against defence; toxin and the cost of resisting it.</li>
-    <li><b>Water.</b> Stam's stable fluids on a 128 by 128 grid with walls; organisms drift with the current and swim against drag that depends on body shape.</li>
-    <li><b>Determinism.</b> Every random draw is a hash of an organism's seed, the tick and a purpose, so runs give the same state on any number of threads.</li>
-    <li><b>Viewer.</b> A software renderer in Flow, shown full screen through Core Animation at the panel's native resolution, with CoreText type. Natural colour, bright-field and dark-field styles. An inspector shows a followed organism's brain at work and its developmental program gene by gene.</li>
-  </ul>
-</section>
-
-<section id="run">
-  <h2>Run it</h2>
-  <p>Needs Flow 2.0 with the flowc C backend, a C11 compiler, and macOS for the window and the renderer's typography. Homebrew libomp makes the parallel loops use every core.</p>
-<pre>./run.sh life         the life world, full screen
-./run.sh life-bench   headless: forms, trophic roles, energy, selection
-./run.sh shot         headless renders (settings in life_shot.flow)
-./run.sh test         tests, determinism, validation against theory
-./run.sh              the Genomic World</pre>
-  <table>
-    <tr><th>Key</th><th>Action</th></tr>
-    <tr><td class="k">Tab</td><td>Choose a world: preset, mode, 2D or 3D bodies</td></tr>
-    <tr><td class="k">Space</td><td>Pause</td></tr>
-    <tr><td class="k">[ ]</td><td>Fewer or more ticks per frame</td></tr>
-    <tr><td class="k">wheel, drag</td><td>Zoom and pan; in 3D, right-drag turns</td></tr>
-    <tr><td class="k">click</td><td>Follow an organism; Esc lets go</td></tr>
-    <tr><td class="k">3</td><td>2D or 3D view</td></tr>
-    <tr><td class="k">V</td><td>Pixels, natural, bright-field or dark-field</td></tr>
-    <tr><td class="k">F</td><td>Show the flow</td></tr>
-    <tr><td class="k">G</td><td>Quality: fast, balanced or full resolution</td></tr>
-    <tr><td class="k">H</td><td>Every key</td></tr>
-  </table>
-</section>
-
-<section id="limits">
-  <h2>Model scope</h2>
-  <ul>
-    <li>Life World uses model cells, dimensionless rates and energy constants. Its ticks have no species-calibrated duration.</li>
-    <li>Body development uses finite scratch grids, a 32,768-cell working list and a 48-gene-per-haplotype program allocation. Energy, upkeep and drag also limit viable body size.</li>
-    <li>The environment and movement are two-dimensional. The 3D option changes body geometry while organisms remain in the plane.</li>
-    <li>Survival and reproduction create emergent selection through the energy budget. The census estimates selection differentials for measured traits. The LTEE transfer proxy has no fitted selection coefficient or fitted organism rates.</li>
-    <li>The archived LTEE competition data supports a separate descriptive fit, <code>w(t) = 1 + 0.02825 t^0.2988</code>, across 40 positive-generation bins from 500 to 50,000 generations. This fit describes the data and does not calibrate Life World.</li>
-    <li>The window and the typography are macOS only for now.</li>
-  </ul>
-</section>
-
-<footer>
-  <div>FlowGenomics. Computational research in evolution, ecology and population genetics. <a href="https://github.com/godofecht/genomic-world">Source code</a></div>
-</footer>
-
+<footer class="page-footer"><span>FlowGenomics</span><a href="https://github.com/godofecht/genomic-world">Source code</a><a href="data/README.md">Data and citations</a></footer>
 </div>
 </body>
 </html>
