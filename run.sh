@@ -13,7 +13,8 @@
 #                       (GW_PRESET, GW_MODE, GW_DIMS, GW_TICKS, GW_PROFILE)
 #   ./run.sh life-video N  N frames rendered headless, to out/life.mp4
 #   ./run.sh experiment NAME  replicated, controlled experiment (phototaxis,
-#                       refuge, networks, range, megaplate) to out/exp/
+#                       refuge, networks, network-value, range, megaplate)
+#                       to out/exp/
 #   ./run.sh shot       headless life world renders to out/ (see
 #                       life_shot.flow for the GW_ settings)
 #   ./run.sh equilibrium  calibrate, solve the attractors, compare cold and
