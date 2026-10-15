@@ -39,7 +39,7 @@ th { color: var(--dim); font-weight: 500; }
 </header>
 
 <h2>1. Purpose and patterns</h2>
-<p>The model asks how bodies, behaviour and ecological roles evolve when everything an organism can do follows from a genome that is inherited, recombined and mutated, under an energy budget, in a moving physical environment. It is a platform for qualitative eco-evolutionary experiments, several of them simplified versions of published laboratory experiments, so that its behaviour can be held against known results.</p>
+<p>The model asks how bodies, behaviour and ecological roles evolve when organism traits follow from inherited, recombined and mutated genomes, under an energy budget in a moving environment. The laboratory presets are simplified experimental analogues. Their units and rates are model-specific.</p>
 <p>Patterns the model is expected to reproduce, tested by replicated, controlled runs (<code>./run.sh experiment</code>; results on the <a href="index.html#evidence">project page</a>):</p>
 <ul>
   <li>Segregation of neutral strains by drift at the edge of an expanding colony, absent in a mixed culture (Hallatschek et al. 2007).</li>
@@ -64,7 +64,7 @@ th { color: var(--dim); font-weight: 500; }
 <table>
 <tr><th>Part</th><th>Contents</th></tr>
 <tr><td>Fixed, 640 loci on 20 chromosomes</td><td>Morphology and physiology (128 loci: size, elongation, lobes, pigment, pattern, flagella, cilia, spines, membrane, chlorophyll, resistance, cytostome, eyespot, lipid, developmental rounds, raptorial organelles); core brain weights (432 loci: 72 weights of 6 bits); thermal optimum (16); breeding threshold (12); neutral markers (30); neutral (22).</td></tr>
-<tr><td>Developmental program, up to 48 genes of 64 bits</td><td>Cell-identity genes: cell type, growth timer, for each of six directions a grow bit and target identity, cell size and hue shift.</td></tr>
+<tr><td>Developmental program, up to 48 genes per haplotype</td><td>Cell-identity genes: cell type, growth timer, for each of six directions a grow bit and target identity, cell size and hue shift. This fixed storage capacity is a model bound.</td></tr>
 <tr><td>Neuron list, up to 32 genes of 64 bits</td><td>Evolved neurons: activation, bias, self weight, three (source, weight) pairs, weights onto turning and thrust.</td></tr>
 </table>
 
@@ -103,7 +103,8 @@ th { color: var(--dim); font-weight: 500; }
 <p>Founders (3000 in the ocean; per preset otherwise) are copies of one genotype: in multicellular modes a core with a mouth in front and a motor behind; in morphology mode a small flagellate with a cytostome. Their brains turn toward food and slow over it; the core's hidden layer is silent and there are no evolved neurons. Each founder carries a Poisson number (mean 3) of random mutations in its brain loci or developmental program, as standing variation. Founders are split into marker groups by nearest group centre, or at random where a preset needs the groups well mixed.</p>
 
 <h2>6. Input data</h2>
-<p>None. Terrain comes from the Genomic World's seeded generator (two ridges with passes); vessels are drawn geometrically.</p>
+<p>The Life World has no empirical input data. Terrain comes from the Genomic World's seeded generator (two ridges with passes); vessels are drawn geometrically. The separate LTEE analysis uses published competition measurements to estimate a descriptive fitness trajectory. It does not calibrate Life World's organism rules.</p>
+<p><a href="data/ltee-fitness.csv">Archived LTEE competition data</a> and <a href="data/ltee-fitness-mean.csv">binned means</a>. The fit is reproducible with <code>python3 analysis/ltee_fit.py</code>. Methods and source details are in <a href="data/README.md">data/README.md</a>.</p>
 
 <h2>7. Submodels</h2>
 <h3>Development</h3>
@@ -139,16 +140,18 @@ th { color: var(--dim); font-weight: 500; }
 <tr><td>With refuge</td><td>as above, columns 0 to 47 protect prey</td><td>as above</td></tr>
 <tr><td>MEGA-plate</td><td>slide, agar, viscosity 0.35, regrowth 0.3, toxin bands 0, 0.6, 1.4, 2.2, 3.0 toward the middle</td><td>600 bacterial cells at both ends</td></tr>
 <tr><td>Phototaxis</td><td>slide, flow 0.04, regrowth 0.05, medium 0.35, light rising as the square of position</td><td>1500 green swimmers, weak cytostome</td></tr>
-<tr><td>Serial transfer</td><td>dish, flow 0.12, regrowth 0.02, a tenth kept every 600 ticks</td><td>1500 bacterial cells</td></tr>
+<tr><td>Serial transfer proxy</td><td>dish, flow 0.12, regrowth 0.02, one tenth retained every 600 model ticks</td><td>1500 bacterial cells</td></tr>
+<tr><td>LTEE transfer proxy</td><td>same dish, one percent retained every 600 model ticks; reset food and detritus</td><td>1500 bacterial cells</td></tr>
 </table>
 
 <h2>9. Limits</h2>
 <ul>
-  <li>No physical units: energy, time and distance are model units. Rates were chosen so behaviour shows within minutes of running; none is fitted to an organism.</li>
+  <li>Energy, time and distance use model units. Rates were chosen so behaviour appears within minutes of running. They are not fitted to an organism.</li>
   <li>The world is two-dimensional; 3D bodies swim in a plane.</li>
-  <li>Bodies are bounded by a scratch grid (31 cells each way in 2D, 15 in 3D), programs by 48 genes and networks by 32 neurons per haplotype.</li>
+  <li>Body development uses scratch grids of 64 by 64 in 2D or 32 by 32 by 32 in 3D, a 32,768-cell working list, and a 31-cell or 15-cell extent from the origin. Programs hold up to 48 genes and networks up to 32 neurons per haplotype.</li>
   <li>Algae are a field; bacteria that remineralise detritus are implicit.</li>
-  <li>The presets aim at the qualitative outcome of their experiments. Quantitative replication would need calibration of rates to the organisms used.</li>
+  <li>The LTEE preset represents a 1% random bottleneck and food reset every 600 model ticks. It does not simulate the 1:100 dilution, DM25 recipe, or growth during the 24-hour cycle. The tick-to-day mapping, cell rates and fitness parameters remain uncalibrated.</li>
+  <li>The archived LTEE measurements have a separate descriptive power-law fit. This fit is an empirical reference and does not calibrate Life World.</li>
 </ul>
 
 <h2>References</h2>
@@ -158,6 +161,7 @@ th { color: var(--dim); font-weight: 500; }
   <li>Grimm et al. (2006, 2010, 2020). The ODD protocol for describing individual-based and agent-based models. Ecological Modelling 198, 221; JASSS 23(2).</li>
   <li>Hallatschek, Hersen, Ramanathan and Nelson (2007). Genetic drift at expanding frontiers promotes gene segregation. PNAS 104: 19926.</li>
   <li>Lenski, Rose, Simpson and Tadler (1991). Long-term experimental evolution in Escherichia coli. American Naturalist 138: 1315.</li>
+  <li>Wiser, Ribeck and Lenski (2013). Long-term dynamics of adaptation in asexual populations. Science 342: 1364. <a href="https://doi.org/10.1126/science.1243357">Paper</a>; <a href="https://doi.org/10.5061/dryad.0hc2m">fitness data</a>.</li>
   <li>Stam (1999). Stable fluids. SIGGRAPH.</li>
   <li>Stanley and Miikkulainen (2002). Evolving neural networks through augmenting topologies. Evolutionary Computation 10: 99.</li>
 </ul>

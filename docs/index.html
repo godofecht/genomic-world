@@ -103,7 +103,7 @@ footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
     <a href="https://github.com/godofecht/genomic-world">Source code</a>
     <a href="#run">Run the models</a>
     <a href="model.html">Model description</a>
-    <a href="#limits">Limits</a>
+    <a href="#limits">Model scope</a>
   </div>
   <div class="hero">
     <video src="media/ocean_follow.mp4" poster="media/ocean_zoom.jpg" autoplay muted loop playsinline></video>
@@ -116,7 +116,7 @@ footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
   <p>Quilio Lab brings together work on evolving organisms, experimental ecology and population genetics. Each area has a model, questions and results that can be inspected in the code.</p>
   <div class="grid">
     <a class="card" href="#life-world"><div class="body"><h3>Artificial life and evolutionary development</h3><p>How inherited programs build bodies and brains, and how ecological interactions shape the forms that evolve.</p><p class="cite">Project: Life World</p></div></a>
-    <a class="card" href="#experiments"><div class="body"><h3>Experimental evolution and microbial ecology</h3><p>Spatial range expansion, antibiotic resistance, predator and prey, light response, and serial transfer.</p><p class="cite">Project: controlled ecological experiments</p></div></a>
+    <a class="card" href="#experiments"><div class="body"><h3>Experimental evolution and microbial ecology</h3><p>Spatial range expansion, antibiotic resistance, predator and prey, light response, and transfer bottlenecks. LTEE fitness measurements provide a separate empirical reference.</p><p class="cite">Project: controlled ecological experiments</p></div></a>
     <a class="card" href="#genomics"><div class="body"><h3>Population genetics and climate adaptation</h3><p>How mutation, recombination, selection, drift and dispersal shape genetic variation across changing environments.</p><p class="cite">Project: Genomic World</p></div></a>
     <a class="card" href="#evidence"><div class="body"><h3>Model validation and scientific computing</h3><p>Replicated controls, deterministic runs and comparisons with population-genetic theory.</p><p class="cite">Methods across both simulation projects</p></div></a>
   </div>
@@ -237,9 +237,9 @@ footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
     <div class="card">
       <img src="media/dish_morph.jpg" alt="A petri dish of single-celled organisms, with the inspector showing trait bars and the brain" loading="lazy">
       <div class="body">
-        <h3>Petri dish, and serial transfer</h3>
-        <p>Liquid culture under a lamp. A serial-transfer version moves a tenth of the population to fresh medium every 600 ticks.</p>
-        <p class="cite">Lenski, Rose, Simpson and Tadler (1991), American Naturalist 138: 1315.</p>
+        <h3>Petri dish and transfer bottlenecks</h3>
+        <p>The exploratory preset retains one tenth of the population every 600 model ticks. The LTEE transfer proxy retains one percent and resets abstract food. It does not model the dilution volume, DM25 medium or daily growth curve.</p>
+        <p class="cite">The LTEE uses a 1:100 daily dilution in DM25, as described in this <a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC5607360/">protocol review</a>. This preset currently represents the bottleneck only.</p>
       </div>
     </div>
   </div>
@@ -311,12 +311,13 @@ footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
 </section>
 
 <section id="limits">
-  <h2>Limits</h2>
+  <h2>Model scope</h2>
   <ul>
-    <li>The experiments are simplified. The organisms are model cells, rates are scaled for speed, and a tick is not calibrated to any species.</li>
-    <li>Bodies are bounded only by a scratch grid (31 cells each way in 2D, 15 in 3D) and by energetics; the developmental program holds up to 48 genes per haplotype in the memory set aside for it.</li>
-    <li>The world is two-dimensional; 3D bodies swim in a plane.</li>
-    <li>Fitness emerges from an energy budget with hand-set constants. No selection coefficient is a parameter; selection is measured, parents against the population.</li>
+    <li>Life World uses model cells, dimensionless rates and energy constants. Its ticks have no species-calibrated duration.</li>
+    <li>Body development uses finite scratch grids, a 32,768-cell working list and a 48-gene-per-haplotype program allocation. Energy, upkeep and drag also limit viable body size.</li>
+    <li>The environment and movement are two-dimensional. The 3D option changes body geometry while organisms remain in the plane.</li>
+    <li>Survival and reproduction create emergent selection through the energy budget. The census estimates selection differentials for measured traits. The LTEE transfer proxy has no fitted selection coefficient or fitted organism rates.</li>
+    <li>The archived LTEE competition data supports a separate descriptive fit, <code>w(t) = 1 + 0.02825 t^0.2988</code>, across 40 positive-generation bins from 500 to 50,000 generations. This fit describes the data and does not calibrate Life World.</li>
     <li>The window and the typography are macOS only for now.</li>
   </ul>
 </section>

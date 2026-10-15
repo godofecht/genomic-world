@@ -28,10 +28,10 @@
 #                resistance evolves in steps, band by band
 #   PHOTOTAXIS   a slide lit from one end; green swimmers with eyespots
 #                on poor medium, so light pays
-#   TRANSFER     serial transfer into fresh medium, keeping a tenth every
-#                600 ticks, as in Lenski's long-term evolution experiment
-#                with E. coli (Lenski, Rose, Simpson and Tadler 1991,
-#                American Naturalist 138: 1315)
+#   TRANSFER     exploratory 1:10 serial transfer every 600 model ticks
+#   LTEE         E. coli LTEE transfer proxy: retain 1% every 600 model
+#                ticks and reset food; organism rates and tick duration
+#                are not calibrated to E. coli
 
 import gsim.config
 import gsim.state
@@ -54,7 +54,8 @@ const P_REFUGE: i32 = 4
 const P_MEGAPLATE: i32 = 5
 const P_PHOTOTAXIS: i32 = 6
 const P_TRANSFER: i32 = 7
-const P_COUNT: i32 = 8
+const P_LTEE: i32 = 8
+const P_COUNT: i32 = 9
 
 export function preset_name(p: i32) -> string {
     if p == P_OCEAN { return "Open ocean" }
@@ -64,7 +65,8 @@ export function preset_name(p: i32) -> string {
     if p == P_REFUGE { return "Predator and prey with a refuge" }
     if p == P_MEGAPLATE { return "MEGA-plate antibiotic gradient" }
     if p == P_PHOTOTAXIS { return "Phototaxis on a slide" }
-    return "Serial transfer (Lenski)"
+    if p == P_TRANSFER { return "Serial transfer (1:10)" }
+    return "LTEE transfer proxy"
 }
 
 export function preset_note(p: i32) -> string {
@@ -75,7 +77,8 @@ export function preset_note(p: i32) -> string {
     if p == P_REFUGE { return "Sediment at the left edge protects prey (Gause 1934)" }
     if p == P_MEGAPLATE { return "Bands of antibiotic rising to the middle; resistance evolves band by band (Baym et al. 2016)" }
     if p == P_PHOTOTAXIS { return "Lamp at the right end, poor medium; eyespots and chlorophyll pay" }
-    return "A tenth moves to fresh medium every 600 ticks (Lenski et al. 1991)"
+    if p == P_TRANSFER { return "One tenth moves to fresh medium every 600 ticks" }
+    return "Retain 1% every 600 ticks; reset food. Tick duration and growth are uncalibrated."
 }
 
 # The mode a preset suggests: lab presets are microbes.
@@ -147,6 +150,7 @@ export function preset_cfg(p: i32, mode: i32, dims: i32) -> LifeCfg {
         c.sex = 0.0
         c.medium = 1.0
         c.founder_bacterial = true
+        if p == P_LTEE { c.transfer_keep = 0.01 }
     }
     return c
 }

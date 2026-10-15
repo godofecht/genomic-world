@@ -933,9 +933,9 @@ export function life_reproduce(l: ptr<Life>) -> i32 {
     return total
 }
 
-# Serial transfer, as in Lenski's long-term evolution experiment: every
-# transfer_every ticks a random transfer_keep of the population goes into
-# fresh medium; the rest are discarded, and food and detritus reset.
+# Serial bottleneck: every transfer_every ticks, retain a random
+# transfer_keep fraction of organisms, discard the rest, and reset food and
+# detritus. This does not simulate dilution or the intervening growth curve.
 export function life_transfer(l: ptr<Life>, total: i32) -> void {
     let every: i32 = l.cfg.transfer_every
     if every <= 0 { return }
