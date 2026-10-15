@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Life World</title>
-<meta name="description" content="Organisms that grow from their genomes, live in an ocean or a laboratory dish, and evolve. Written in Flow.">
+<title>Quilio Lab | Computational Evolution</title>
+<meta name="description" content="Quilio Lab studies evolution, ecology and population genetics through computational models and controlled experiments.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
@@ -93,14 +93,15 @@ footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
 <div class="wrap">
 
 <header>
-  <h1>Life World</h1>
-  <p class="lede">Organisms that grow from their genomes, live in an ocean or a laboratory dish, and evolve. Written in Flow; runs full screen.</p>
+  <h1>Quilio Lab</h1>
+  <p class="lede">I lead Quilio Lab, an independent computational research lab studying how genomes, organisms and environments shape evolution.</p>
   <div class="links">
-    <a href="https://github.com/godofecht/genomic-world">Source on GitHub</a>
-    <a href="#run">Run it</a>
+    <a href="#research">Research areas</a>
     <a href="#experiments">Experiments</a>
-    <a href="demos.html">Experiment lab</a>
-    <a href="#evidence">Evidence</a>
+    <a href="demos.html">Interactive models</a>
+    <a href="#evidence">Methods and evidence</a>
+    <a href="https://github.com/godofecht/genomic-world">Source code</a>
+    <a href="#run">Run the models</a>
     <a href="model.html">Model description</a>
     <a href="#limits">Limits</a>
   </div>
@@ -110,11 +111,23 @@ footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
   <p class="caption">The open ocean, following one organism. Motors beat their flagella, eyes look ahead, spikes point out. Specks are marine snow carried by the currents.</p>
 </header>
 
-<section>
-  <h2>What it is</h2>
+<section id="research">
+  <h2>Research areas</h2>
+  <p>Quilio Lab brings together work on evolving organisms, experimental ecology and population genetics. Each area has a model, questions and results that can be inspected in the code.</p>
+  <div class="grid">
+    <a class="card" href="#life-world"><div class="body"><h3>Artificial life and evolutionary development</h3><p>How inherited programs build bodies and brains, and how ecological interactions shape the forms that evolve.</p><p class="cite">Project: Life World</p></div></a>
+    <a class="card" href="#experiments"><div class="body"><h3>Experimental evolution and microbial ecology</h3><p>Spatial range expansion, antibiotic resistance, predator and prey, light response, and serial transfer.</p><p class="cite">Project: controlled ecological experiments</p></div></a>
+    <a class="card" href="#genomics"><div class="body"><h3>Population genetics and climate adaptation</h3><p>How mutation, recombination, selection, drift and dispersal shape genetic variation across changing environments.</p><p class="cite">Project: Genomic World</p></div></a>
+    <a class="card" href="#evidence"><div class="body"><h3>Model validation and scientific computing</h3><p>Replicated controls, deterministic runs and comparisons with population-genetic theory.</p><p class="cite">Methods across both simulation projects</p></div></a>
+  </div>
+</section>
+
+<section id="life-world">
+  <h2>Artificial life and evolutionary development</h2>
+  <p class="dim"><b>Life World</b> is a spatial model of organisms whose bodies, brains and ecological roles develop from inherited genomes.</p>
   <p>Each organism is diploid. Its genome holds a developmental program, a brain and a set of morphological and physiological traits. A body grows from one cell by that program; the brain turns what it senses into turning and thrust; the body sets what it can eat, how fast it swims, how well it fights and what it costs to run. Organisms that gather enough energy breed, their genomes recombine and mutate, and lineages evolve.</p>
   <p>What they become is left to evolution. The founders are a three-cell grazer. Predators, armour, eyes, photosynthesis, new body plans and longer developmental programs appear only if they evolve.</p>
-  <p class="dim">The same repository holds the Genomic World, a population-genetics simulator on the same engine whose genetics are checked against theory: drift, mutation-selection balance, linkage decay, selection and fixation, 14 checks, all within tolerance.</p>
+  <p class="dim">The companion Genomic World project studies population genetics and climate adaptation. Its test suite compares drift, mutation-selection balance, linkage decay, selection and fixation with theory.</p>
 </section>
 
 <section>
@@ -175,8 +188,8 @@ footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
 </section>
 
 <section id="experiments">
-  <h2>Worlds and experiments</h2>
-  <p>The open ocean has gyres around ridges, upwelling that drifts, day and night. The laboratory presets are simplified versions of published experiments, so a run can be held against what happened in the real one.</p>
+  <h2>Experimental evolution and microbial ecology</h2>
+  <p>The open ocean has gyres around ridges, upwelling that drifts, day and night. The laboratory presets are simplified versions of published experiments, so a run can be compared with the reported patterns. <a href="demos.html">Interactive browser models</a> let readers explore selected mechanisms.</p>
   <div class="grid">
     <div class="card">
       <video src="media/range_timelapse.mp4" poster="media/range.jpg" autoplay muted loop playsinline></video>
@@ -232,8 +245,15 @@ footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
   </div>
 </section>
 
+<section id="genomics">
+  <h2>Population genetics and climate adaptation</h2>
+  <p><b>Genomic World</b> simulates individuals in space and tracks ecological and evolutionary change. Diploid populations forage, reproduce and evolve on a 256 by 256 torus with a latitudinal temperature gradient. Each genome carries 128 loci across four chromosomes, with recombination and mutation.</p>
+  <p>The model tracks allele frequencies, marker heterozygosity, regional F<sub>ST</sub>, adaptation to local temperature, heritability, dispersal and genetic load. Its experiments vary mutation rate, climate, population bottlenecks and mountain passes.</p>
+  <p><a href="https://github.com/godofecht/genomic-world">Read the Genomic World source and run instructions on GitHub</a>.</p>
+</section>
+
 <section id="evidence">
-  <h2>Evidence</h2>
+  <h2>Model validation and evidence</h2>
   <p>Each experiment runs a treatment and its controls from the same seeds (5 replicates; 8 for the refuge), and reports each outcome as a mean with a 95% confidence interval, and the difference between arms with a 95% Welch interval. Run any of them with <code>./run.sh experiment NAME</code>; the full model is in the <a href="model.html">model description</a>.</p>
   <table>
     <tr><th>Experiment</th><th>Treatment</th><th>Control</th><th>Difference (95% CI)</th></tr>
@@ -302,7 +322,7 @@ footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
 </section>
 
 <footer>
-  <div>Life World and the Genomic World, written in Flow. <a href="https://github.com/godofecht/genomic-world">github.com/godofecht/genomic-world</a></div>
+  <div>Quilio Lab. Computational research in evolution, ecology and population genetics. <a href="https://github.com/godofecht/genomic-world">Source code</a></div>
 </footer>
 
 </div>
