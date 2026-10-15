@@ -109,7 +109,7 @@ footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
 </header>
 <section id="evidence">
   <h2>Model validation and evidence</h2>
-  <p>Each experiment runs a treatment and its controls from the same seeds (5 replicates; 8 for the refuge), and reports each outcome as a mean with a 95% confidence interval, and the difference between arms with a 95% Welch interval. Run any of them with <code>./run.sh experiment NAME</code>; the full model is in the <a href="model.html">model description</a>.</p>
+  <p><strong>Historical baseline (pre-causal-sensor revision).</strong> The following estimates were obtained with the earlier model using matched seeds, per-arm 95% intervals, and Welch differences (5 replicates; 8 for the refuge). They have <em>not</em> been regenerated for the new photoreceptor or neuron-cost changes. The revised runner uses a paired Student-t interval because treatment and control share seeds. Run <code>./run.sh experiment NAME</code>; the full model is in the <a href="model.html">model description</a>.</p>
   <table>
     <tr><th>Experiment</th><th>Treatment</th><th>Control</th><th>Difference (95% CI)</th></tr>
     <tr><td>Range expansion: local over global heterozygosity, agar against stirred liquid</td><td>0.058</td><td>0.935</td><td>&minus;0.877 (&minus;0.929 to &minus;0.825)</td></tr>
@@ -119,7 +119,9 @@ footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
     <tr><td>Phototaxis: mean position, gradient against blinded sense</td><td>158.5</td><td>160.3</td><td>&minus;1.8 (&minus;19.4 to 15.8)</td></tr>
     <tr><td>Networks: mean evolved neurons, active against inert</td><td>2.75</td><td>3.40</td><td>&minus;0.65 (&minus;2.11 to 0.81)</td></tr>
   </table>
-  <p>Two earlier claims from single runs did not survive their controls and are withdrawn: that cells steer toward the light, and that larger networks were being selected.</p>
+  <p>Two earlier claims from single runs did not survive their controls and remain withdrawn: that cells steer toward the light, and that larger networks were being selected.</p>
+  <h3>Candidate improvements awaiting new replicated results</h3>
+  <p>The revised phototaxis model measures signed light contrast at the left and right sides of an eyespot and gives the slide founders an explicit inherited light-to-turn reflex. This is a test of steering by an existing trait, not proof that steering evolved. The revised neural model charges each expressed neuron an equal metabolic cost in active and inert controls. A separate <code>network-value</code> experiment compares energy and births per 1,000 organism-ticks without equating more neurons with higher fitness. Re-run <code>./run.sh test</code>, <code>./run.sh experiment phototaxis</code>, <code>./run.sh experiment networks</code> and <code>./run.sh experiment network-value</code> before adding any new claims. See <a href="https://github.com/godofecht/genomic-world/blob/main/docs/CAUSAL_VALIDATION.md">the causal validation protocol</a>.</p>
   <div class="grid">
     <div class="card"><img src="media/exp_range.svg" alt="Local heterozygosity falling on agar and staying near one in liquid" loading="lazy"><div class="body"><p>Range expansion. Lines are means over replicates; bands span the lowest to the highest replicate.</p></div></div>
     <div class="card"><img src="media/exp_megaplate.svg" alt="Mean resistance rising under the drug and staying near zero without" loading="lazy"><div class="body"><p>MEGA-plate.</p></div></div>
