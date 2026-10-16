@@ -15,7 +15,7 @@
     }
     ctx.fillText(yLabel, 10, 14); ctx.fillText(xLabel, w - right - 32, h - 8);
     for (const item of series) {
-      ctx.strokeStyle = item.color; ctx.lineWidth = 2.6; ctx.beginPath();
+      ctx.strokeStyle = item.color; ctx.lineWidth = item.width ?? 2.6; ctx.beginPath();
       item.values.forEach((v, i) => {
         const x = left + (w - left - right) * i / Math.max(1, item.values.length - 1);
         const y = top + (h - top - bottom) * (1 - clamp(v / maxY, 0, 1));
@@ -146,8 +146,69 @@
   $('founders').addEventListener('input', () => { $('foundersOut').textContent = $('founders').value; });
   $('runFrontier').addEventListener('click', growFrontier); $('resetFrontier').addEventListener('click', frontierReset);
 
+  // Wright-Fisher replicates with genic selection followed by binomial sampling.
+  const wfCanvas = $('wrightfisher');
+  let wfPaths = [], wfGeneration = 0;
+  let wfState = 864209753;
+  const wfRandom = () => { wfState = (1664525 * wfState + 1013904223) >>> 0; return wfState / 4294967296; };
+  const wfReset = () => {
+    wfState = 864209753; wfGeneration = 0;
+    const start = Number($('wfStart').value);
+    wfPaths = Array.from({ length: 20 }, () => [start]);
+    drawWF();
+  };
+  const drawWF = () => {
+    if (!wfCanvas) return;
+    const steps = wfPaths[0].length;
+    const means = Array.from({ length: steps }, (_, gen) =>
+      wfPaths.reduce((sum, path) => sum + path[gen], 0) / wfPaths.length
+    );
+    const base = colors('--blue').match(/[\da-f]{2}/gi)?.map(x => parseInt(x, 16)) || [115, 185, 210];
+    const pale = `rgba(${base[0]},${base[1]},${base[2]},0.28)`;
+    linePlot(wfCanvas, [
+      ...wfPaths.map(values => ({ values, color: pale, width: 1.1 })),
+      { values: means, color: colors('--accent'), width: 3 }
+    ], 1, 'generation', 'frequency');
+    const final = wfPaths.map(path => path[path.length - 1]);
+    const fixed = final.filter(p => p === 1).length;
+    const lost = final.filter(p => p === 0).length;
+    const mean = final.reduce((sum, p) => sum + p, 0) / final.length;
+    $('wfReadout').textContent = `Generation ${wfGeneration} · mean ${mean.toFixed(3)} · fixed ${fixed}/20 · lost ${lost}/20`;
+  };
+  const runWF = () => {
+    wfReset();
+    const population = Number($('wfSize').value), copies = 2 * population;
+    const selection = Number($('wfSelection').value);
+    const generations = Number($('wfGenerations').value);
+    for (let gen = 0; gen < generations; gen++) {
+      for (const path of wfPaths) {
+        const p = path[path.length - 1];
+        const selected = p * (1 + selection) / (1 + selection * p);
+        let count = 0;
+        for (let allele = 0; allele < copies; allele++) {
+          if (wfRandom() < selected) count++;
+        }
+        path.push(count / copies);
+      }
+    }
+    wfGeneration = generations;
+    drawWF();
+  };
+  for (const id of ['wfStart', 'wfSelection', 'wfSize', 'wfGenerations']) {
+    $(id).addEventListener('input', () => {
+      const value = Number($(id).value);
+      const digits = id === 'wfStart' || id === 'wfSelection' ? 2 : 0;
+      $(`${id}Out`).textContent = value.toFixed(digits);
+    });
+  }
+  $('runWF').addEventListener('click', runWF); $('resetWF').addEventListener('click', wfReset);
+
   $('warmOut').textContent = Number($('warm').value).toFixed(2); $('migrationOut').textContent = Number($('migration').value).toFixed(2); $('strengthOut').textContent = Number($('strength').value).toFixed(1);
   $('refugeOut').textContent = `${Math.round(Number($('refuge').value) * 100)}%`; $('foodOut').textContent = Number($('food').value).toFixed(2);
   $('neighborsOut').textContent = $('neighbors').value; $('foundersOut').textContent = $('founders').value;
-  clineReset(); resetPred(); frontierReset();
+  $('wfStartOut').textContent = Number($('wfStart').value).toFixed(2);
+  $('wfSelectionOut').textContent = Number($('wfSelection').value).toFixed(2);
+  $('wfSizeOut').textContent = Number($('wfSize').value).toFixed(0);
+  $('wfGenerationsOut').textContent = Number($('wfGenerations').value).toFixed(0);
+  clineReset(); resetPred(); frontierReset(); wfReset();
 })();
