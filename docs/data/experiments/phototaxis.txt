@@ -1,0 +1,15 @@
+phototaxis: 5 replicates per arm, 8000 ticks
+
+mean position (128 = no bias)
+  gradient: 158.511 (95% CI 143.775 to 173.247)
+  even light: 128.328 (95% CI 126.614 to 130.042)
+  blinded: 160.306 (95% CI 145.064 to 175.548)
+  gradient minus even light: 30.183 (95% CI 15.348 to 45.018; significant)
+  gradient minus blinded: -1.795 (95% CI -19.406 to 15.816; not significant)
+
+share in brightest quarter
+  gradient: 0.427 (95% CI 0.340 to 0.514)
+  even light: 0.252 (95% CI 0.244 to 0.260)
+  blinded: 0.448 (95% CI 0.355 to 0.541)
+  gradient minus even light: 0.175 (95% CI 0.088 to 0.263; significant)
+  gradient minus blinded: -0.021 (95% CI -0.127 to 0.085; not significant)

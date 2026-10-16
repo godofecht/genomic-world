@@ -372,28 +372,29 @@ These are simplified versions. What they show is measured below.
 
 ### Evidence: replicated, controlled experiments
 
-`./run.sh experiment NAME` runs a treatment arm and its controls from the
-same seeds (5 replicates, 8 for the refuge experiment), writes every time
+`./run.sh experiment NAME` runs treatment and control arms from the same five
+seeds and writes every time
 series to `out/exp/NAME.csv`, and reports each outcome over the last
 quarter of the run as a mean with a 95 percent confidence interval, and
-the difference between arms with a 95 percent Welch interval.
-`tools/plot_experiments.py` draws the charts on the project page.
+the difference between arms with a 95 percent Welch interval. Run the
+complete set with `./run.sh experiment-suite`; it packages the results in
+`docs/data/experiments/` for the project page.
 
 | Experiment | Outcome | Treatment | Control | Difference (95% CI) | Reading |
 |---|---|---|---|---|---|
 | Range expansion, agar against stirred liquid | local over global heterozygosity | 0.058 | 0.935 | -0.877 (-0.929 to -0.825) | Strains segregate at an expanding front by drift and stay mixed in liquid, as Hallatschek et al. found |
 | MEGA-plate, drug against no drug | mean resistance | 0.387 | 0.003 | 0.384 (0.368 to 0.399) | Resistance evolves only under the drug; every drug replicate reached the top band (highest resistance 0.875 against 0.228) |
-| Predator and prey, no refuge against refuge | prey alive at the end | 35 | 2,204 | -2,168 (-2,302 to -2,034) | Prey persist with a refuge in 8 of 8; without, prey and predator both die out in 2 of 8, prey die out alone in 2, and a remnant of 54 to 86 prey holds on in 4 |
+| Predator and prey, no refuge against refuge | prey alive at the end | 44 | 2,224 | -2,180 (-2,405 to -1,955) | Prey counts are higher with the refuge across five runs |
 | Phototaxis, gradient against even light | mean position (128 = no bias) | 158.5 | 128.3 | 30.2 (15.3 to 45.0) | Cells gather toward the lamp |
 | Phototaxis, gradient against blinded light sense | mean position | 158.5 | 160.3 | -1.8 (-19.4 to 15.8) | Gathering does not need the sense: within 8,000 ticks it comes from growth where light is strong; steering adds nothing measurable |
-| Networks, active against inert | mean evolved neurons | 2.75 | 3.40 | -0.65 (-2.11 to 0.81) | Network growth is mutation pressure; no detectable selection for larger networks |
+| Networks, active against inert | mean evolved neurons | 2.87 | 3.95 | -1.09 (-3.02 to 0.85) | The interval includes zero; these runs give no evidence that active networks grew larger |
 
 Two earlier single-run statements did not survive these controls and have
 been withdrawn: that cells steer toward the light, and that larger
-networks were being selected. The first refuge experiment also used a
-predator that could graze when prey ran out (`out/exp/refuge_facultative.txt`):
-prey died out in all 8 dishes without a refuge and predators never did.
-The founding predator now has no cytostome, as Didinium cannot graze.
+networks were being selected. An earlier refuge experiment used a predator
+that could graze when prey ran out (`out/exp/refuge_facultative.txt`). The
+founding predator now has no cytostome, matching Didinium's prey-specific
+feeding role.
 
 ### Viewing
 

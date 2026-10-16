@@ -1,0 +1,23 @@
+experiment,outcome,arm,replicates,mean,ci95_low,ci95_high
+range,local / global heterozygosity,agar,5,0.058115000,0.007191530,0.109038470
+range,organisms,agar,5,1865.350000000,1257.290488890,2473.409511110
+range,local / global heterozygosity,stirred liquid,5,0.935035000,0.922807228,0.947262772
+range,organisms,stirred liquid,5,2032.375000000,2013.683646023,2051.066353977
+megaplate,mean resistance,antibiotic,5,0.386730000,0.371510097,0.401949903
+megaplate,highest resistance,antibiotic,5,0.875000000,0.875000000,0.875000000
+megaplate,mean resistance,no drug,5,0.003020000,0.002462463,0.003577537
+megaplate,highest resistance,no drug,5,0.228125000,0.206008003,0.250241997
+refuge,prey alive at end,no refuge,5,44.000000000,-8.052775926,96.052775926
+refuge,predators alive at end,no refuge,5,672.600000000,-57.764808665,1402.964808665
+refuge,prey alive at end,refuge,5,2224.000000000,2005.602709834,2442.397290166
+refuge,predators alive at end,refuge,5,792.000000000,264.863255601,1319.136744399
+phototaxis,mean position (128 = no bias),gradient,5,158.511251111,143.775334975,173.247167247
+phototaxis,share in brightest quarter,gradient,5,0.426993333,0.339797306,0.514189360
+phototaxis,mean position (128 = no bias),even light,5,128.328115556,126.614197605,130.042033507
+phototaxis,share in brightest quarter,even light,5,0.251715556,0.243728127,0.259702984
+phototaxis,mean position (128 = no bias),blinded,5,160.306017778,145.064267152,175.547768403
+phototaxis,share in brightest quarter,blinded,5,0.448124444,0.354810397,0.541438492
+networks,mean evolved neurons,networks active,5,2.865110000,1.494494362,4.235725638
+networks,largest network,networks active,5,8.733333333,7.756240921,9.710425746
+networks,mean evolved neurons,networks inert,5,3.953476667,2.140463488,5.766489845
+networks,largest network,networks inert,5,9.400000000,6.668306918,12.131693082

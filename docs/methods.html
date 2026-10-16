@@ -109,15 +109,15 @@ footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
 </header>
 <section id="evidence">
   <h2>Model validation and evidence</h2>
-  <p>Each experiment runs a treatment and its controls from the same seeds (5 replicates; 8 for the refuge), and reports each outcome as a mean with a 95% confidence interval, and the difference between arms with a 95% Welch interval. Run any of them with <code>./run.sh experiment NAME</code>; the full model is in the <a href="model.html">model description</a>.</p>
+  <p>Each experiment runs treatment and control arms from the same five seeds. It reports the mean and 95% confidence interval for each arm, plus the difference with a 95% Welch interval. Run an experiment with <code>./run.sh experiment NAME</code>. The full model is in the <a href="model.html">model description</a>.</p>
   <table>
     <tr><th>Experiment</th><th>Treatment</th><th>Control</th><th>Difference (95% CI)</th></tr>
     <tr><td>Range expansion: local over global heterozygosity, agar against stirred liquid</td><td>0.058</td><td>0.935</td><td>&minus;0.877 (&minus;0.929 to &minus;0.825)</td></tr>
-    <tr><td>MEGA-plate: mean resistance, drug against none</td><td>0.387</td><td>0.003</td><td>0.384 (0.368 to 0.399)</td></tr>
-    <tr><td>Predator and prey: prey alive, no refuge against refuge</td><td>35</td><td>2,204</td><td>&minus;2,168 (&minus;2,302 to &minus;2,034)</td></tr>
+    <tr><td>MEGA-plate: mean resistance, antibiotic against no drug</td><td>0.387</td><td>0.003</td><td>0.384 (0.368 to 0.399)</td></tr>
+    <tr><td>Predator and prey: final prey count, no refuge against refuge</td><td>44</td><td>2,224</td><td>&minus;2,180 (&minus;2,405 to &minus;1,955)</td></tr>
     <tr><td>Phototaxis: mean position, gradient against even light</td><td>158.5</td><td>128.3</td><td>30.2 (15.3 to 45.0)</td></tr>
     <tr><td>Phototaxis: mean position, gradient against blinded sense</td><td>158.5</td><td>160.3</td><td>&minus;1.8 (&minus;19.4 to 15.8)</td></tr>
-    <tr><td>Networks: mean evolved neurons, active against inert</td><td>2.75</td><td>3.40</td><td>&minus;0.65 (&minus;2.11 to 0.81)</td></tr>
+    <tr><td>Networks: mean evolved neurons, active against inert</td><td>2.87</td><td>3.95</td><td>&minus;1.09 (&minus;3.02 to 0.85)</td></tr>
   </table>
   <p>Two earlier claims from single runs did not survive their controls and are withdrawn: that cells steer toward the light, and that larger networks were being selected.</p>
   <div class="grid">
@@ -127,6 +127,14 @@ footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
     <div class="card"><img src="media/exp_phototaxis.svg" alt="Mean position along the slide for gradient, even light and blinded arms" loading="lazy"><div class="body"><p>Phototaxis: the gradient and blinded arms overlap.</p></div></div>
     <div class="card"><img src="media/exp_networks.svg" alt="Mean evolved neurons growing alike in active and inert arms" loading="lazy"><div class="body"><p>Evolved networks: active and inert grow alike.</p></div></div>
   </div>
+  <p><a href="data/experiments/README.md">Run commands and raw time series</a> · <a href="data/experiments/summary.csv">Means and confidence intervals</a> · <a href="data/experiments/contrasts.csv">Treatment-control contrasts</a></p>
+</section>
+<section id="calibration">
+  <h2>Empirical calibration status</h2>
+  <p>The LTEE competition measurements provide one empirical target. The current analysis bins measured relative fitness by generation and fits <code>w(t) = 1 + 0.02825 t^0.2988</code> across 40 positive-generation bins. The fit describes the archived data. It does not estimate Life World parameters.</p>
+  <p>Life World currently has an LTEE-inspired 1% transfer and food reset. The model does not simulate the daily growth cycle or the competition assay. A species calibration would need a measured target for each fitted quantity, a mapping from model time and rates to the assay, a fitting procedure, and held-out data for evaluation.</p>
+  <p>Genomic World also measures selection width, dispersal and density in its own agent runs for its mean-field approximation. Separate checks compare population-genetic outputs with theory. Those checks validate internal agreement and theory predictions. They are not fits to a field or laboratory dataset.</p>
+  <p><a href="experiments.html#ltee-data">View the LTEE plot and source data</a> · <a href="data/README.md">Data provenance</a></p>
 </section>
 <section>
   <h2>How it works</h2>
@@ -145,6 +153,7 @@ footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
   <p>Needs Flow 2.0 with the flowc C backend, a C11 compiler, and macOS for the window and the renderer's typography. Homebrew libomp makes the parallel loops use every core.</p>
 <pre>./run.sh life         the life world, full screen
 ./run.sh life-bench   headless: forms, trophic roles, energy, selection
+./run.sh experiment-suite run and package five replicated experiments
 ./run.sh shot         headless renders (settings in life_shot.flow)
 ./run.sh test         tests, determinism, validation against theory
 ./run.sh              the Genomic World</pre>
@@ -169,7 +178,7 @@ footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
     <li>Body development uses finite scratch grids, a 32,768-cell working list and a 48-gene-per-haplotype program allocation. Energy, upkeep and drag also limit viable body size.</li>
     <li>The environment and movement are two-dimensional. The 3D option changes body geometry while organisms remain in the plane.</li>
     <li>Survival and reproduction create emergent selection through the energy budget. The census estimates selection differentials for measured traits. The LTEE transfer proxy has no fitted selection coefficient or fitted organism rates.</li>
-    <li>The archived LTEE competition data supports a separate descriptive fit, <code>w(t) = 1 + 0.02825 t^0.2988</code>, across 40 positive-generation bins from 500 to 50,000 generations. This fit describes the data and does not calibrate Life World.</li>
+    <li>The archived LTEE competition data supports a separate descriptive fit, <code>w(t) = 1 + 0.02825 t^0.2988</code>, across 40 positive-generation bins from 500 to 50,000 generations. The fit describes the data. Life World parameters remain uncalibrated to E. coli.</li>
     <li>The window and the typography are macOS only for now.</li>
   </ul>
 </section>

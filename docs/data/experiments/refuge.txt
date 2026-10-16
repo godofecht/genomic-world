@@ -1,0 +1,11 @@
+refuge: 5 replicates per arm, 20000 ticks
+
+prey alive at end
+  no refuge: 44.000 (95% CI -8.053 to 96.053)
+  refuge: 2224.000 (95% CI 2005.603 to 2442.397)
+  no refuge minus refuge: -2180.000 (95% CI -2404.515 to -1955.485; significant)
+
+predators alive at end
+  no refuge: 672.600 (95% CI -57.765 to 1402.965)
+  refuge: 792.000 (95% CI 264.863 to 1319.137)
+  no refuge minus refuge: -119.400 (95% CI -886.769 to 647.969; not significant)

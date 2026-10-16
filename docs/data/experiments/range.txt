@@ -1,0 +1,11 @@
+range: 5 replicates per arm, 3000 ticks
+
+local / global heterozygosity
+  agar: 0.058 (95% CI 0.007 to 0.109)
+  stirred liquid: 0.935 (95% CI 0.923 to 0.947)
+  agar minus stirred liquid: -0.877 (95% CI -0.929 to -0.825; significant)
+
+organisms
+  agar: 1865.350 (95% CI 1257.290 to 2473.410)
+  stirred liquid: 2032.375 (95% CI 2013.684 to 2051.066)
+  agar minus stirred liquid: -167.025 (95% CI -775.372 to 441.322; not significant)

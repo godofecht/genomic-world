@@ -1,0 +1,11 @@
+networks: 5 replicates per arm, 20000 ticks
+
+mean evolved neurons
+  networks active: 2.865 (95% CI 1.495 to 4.236)
+  networks inert: 3.953 (95% CI 2.140 to 5.766)
+  networks active minus networks inert: -1.088 (95% CI -3.025 to 0.848; not significant)
+
+largest network
+  networks active: 8.733 (95% CI 7.756 to 9.710)
+  networks inert: 9.400 (95% CI 6.668 to 12.132)
+  networks active minus networks inert: -0.667 (95% CI -3.354 to 2.020; not significant)

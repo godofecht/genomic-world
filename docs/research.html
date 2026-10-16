@@ -174,6 +174,25 @@ footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
   <p>The model tracks allele frequencies, marker heterozygosity, regional F<sub>ST</sub>, adaptation to local temperature, heritability, dispersal and genetic load. Its experiments vary mutation rate, climate, population bottlenecks and mountain passes.</p>
   <p><a href="https://github.com/godofecht/genomic-world">Read the Genomic World source and run instructions on GitHub</a>.</p>
 </section>
+<section id="shared-principles">
+  <h2>Shared principles across models</h2>
+  <p>The projects use several model forms. The common ideas travel between them, while the measured quantities and assumptions stay specific to each model.</p>
+  <table>
+    <tr><th>Simulation form</th><th>Question</th><th>What it represents</th></tr>
+    <tr><td>Spatial organism model</td><td>How do bodies, behaviour and ecological roles evolve together?</td><td>Energy-limited organisms with inherited developmental programs in changing habitats.</td></tr>
+    <tr><td>Population genetics</td><td>How do drift, selection, recombination and migration change variation?</td><td>Diploid populations across a spatial temperature gradient and a controlled Wright-Fisher population.</td></tr>
+    <tr><td>Mean-field dynamics</td><td>How do allele frequencies and genetic load change across generations?</td><td>Mutation-selection recursions and a reaction-diffusion cline approximation.</td></tr>
+    <tr><td>Browser models</td><td>How does a single mechanism respond to changed conditions?</td><td>Small interactive models for climate adaptation, predator and prey, range expansion, antibiotics and phototaxis.</td></tr>
+  </table>
+  <table>
+    <tr><th>Principle</th><th>Where it appears</th><th>What carries across</th></tr>
+    <tr><td>Rendering</td><td>Life World body-plan, morphology and combined modes; 2D and 3D bodies; pixels, natural colour, bright-field and dark-field views</td><td>The viewer reads simulated environment and organism state, so one renderer can inspect distinct body representations and habitats.</td></tr>
+    <tr><td>Selection</td><td>Energy budgets and trait differentials in Life World; allele fitness in Wright-Fisher runs; thermal selection in Genomic World</td><td>Heritable differences change survival or reproduction. The model records outcomes in the units of each simulation.</td></tr>
+    <tr><td>Generation</td><td>Diploid inheritance, recombination and mutation in the population-genetic engine; inherited developmental programs in Life World</td><td>Variation passes through generations and changes under mutation, recombination, drift and selection.</td></tr>
+  </table>
+  <p>These are software and modelling principles shared across several simulations. They do not establish that one parameter set predicts every species. Life World uses model cells, rates chosen for run speed, bounded body grids and up to 48 developmental genes per haplotype. Its world and movement are 2D, including runs with 3D bodies.</p>
+  <p><a href="experiments.html#run-set">See the latest controlled run set</a>. <a href="methods.html#calibration">See the empirical calibration status</a>.</p>
+</section>
 <footer class="page-footer"><span>FlowGenomics</span><a href="https://github.com/godofecht/genomic-world">Source code</a><a href="data/README.md">Data and citations</a></footer>
 </div>
 </body>

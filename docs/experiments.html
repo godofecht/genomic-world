@@ -112,7 +112,7 @@ footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
 </header>
 <section id="experiments">
   <h2>Experimental evolution and microbial ecology</h2>
-  <p>The open ocean has gyres around ridges, upwelling that drifts, day and night. The laboratory presets are simplified versions of published experiments, so a run can be compared with the reported patterns. <a href="demos.html">Interactive browser models</a> let readers explore selected mechanisms.</p>
+  <p>The open ocean has gyres around ridges, drifting upwelling and day-night cycles. Laboratory presets simplify published experimental systems. They test whether selected patterns arise in this model. <a href="demos.html">Interactive browser models</a> let readers explore additional mechanisms.</p>
   <nav class="section-nav" aria-label="Jump to an experiment"><a href="#range">Range expansion</a><a href="#megaplate">MEGA-plate</a><a href="#refuge">Predator and prey</a><a href="#phototaxis">Phototaxis</a><a href="#ocean">Open ocean</a><a href="#transfer">Transfer</a><a href="#ltee-data">LTEE data</a></nav>
   <div class="grid">
     <div class="card" id="range">
@@ -120,8 +120,8 @@ footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
       <div class="body">
         <h3>Range expansion on agar</h3>
         <p>Two neutral strains spread from a drop. Cells hardly move on agar, so the colony grows at its edge, where few cells found each new patch.</p>
-        <p class="cite">Hallatschek, Hersen, Ramanathan and Nelson (2007), Genetic drift at expanding frontiers promotes gene segregation. PNAS 104: 19926.</p>
-        <p class="result">The strains separate into sectors at the edge by drift alone: local heterozygosity falls to 0.06 of the global value, against 0.94 in a stirred culture.</p>
+        <p class="cite"><a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC2148399/">Hallatschek et al. (2007), Genetic drift at expanding frontiers promotes gene segregation. PNAS 104: 19926.</a></p>
+        <p class="result">Across five runs, local over global heterozygosity averaged 0.058 on agar and 0.935 in stirred liquid. The paired-arm difference was -0.877 (95% Welch CI -0.929 to -0.825).</p>
       </div>
     </div>
     <div class="card" id="megaplate">
@@ -129,8 +129,8 @@ footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
       <div class="body">
         <h3>MEGA-plate</h3>
         <p>A long plate with antibiotic in bands rising toward the middle, inoculated at both ends, under bright-field.</p>
-        <p class="cite">Baym, Lieberman, Chase, Gross and Kishony (2016), Spatiotemporal microbial evolution on antibiotic landscapes. Science 353: 1147.</p>
-        <p class="result">Mean resistance reaches 0.39 with the drug and stays at 0.003 without it, over 5 replicates; every drug replicate reaches the highest band.</p>
+        <p class="cite"><a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC5534434/">Baym et al. (2016), Spatiotemporal microbial evolution on antibiotic landscapes. Science 353: 1147.</a></p>
+        <p class="result">Across five runs, mean model resistance was 0.387 with antibiotic and 0.003 without. The difference was 0.384 (95% Welch CI 0.368 to 0.399). Resistance is a dimensionless model score. The experiment did not measure antibiotic concentration.</p>
       </div>
     </div>
     <div class="card" id="refuge">
@@ -138,8 +138,8 @@ footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
       <div class="body">
         <h3>Predator and prey, with a refuge</h3>
         <p>A raptorial predator and its prey in a small dish, in dark-field. In one version, sediment at the left edge hides prey.</p>
-        <p class="cite">Gause (1934), The Struggle for Existence.</p>
-        <p class="result">Over 8 replicates, prey persist with the refuge in every dish (about 2,200 each). Without it, prey and predator both die out in 2 dishes, as in Gause's, prey die out alone in 2, and a remnant of prey holds on in 4.</p>
+        <p class="cite"><a href="https://sites.science.oregonstate.edu/~deleenhp/teaching/fall15/MTH427/Gause-The-Struggle-for-Existence.pdf">Gause (1934), The Struggle for Existence.</a></p>
+        <p class="result">Across five runs, final prey counts averaged 44 without a refuge and 2,224 with one. The difference was -2,180 (95% Welch CI -2,405 to -1,955). The predator count difference was -119 (95% Welch CI -887 to 648).</p>
       </div>
     </div>
     <div class="card" id="phototaxis">
@@ -147,7 +147,7 @@ footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
       <div class="body">
         <h3>Phototaxis on a slide</h3>
         <p>A slide lit from one end, on poor medium. Cells can sense the light gradient along their heading.</p>
-        <p class="result">Cells gather toward the lamp (mean position 158 against 128 under even light). Blinding the light sense changes nothing. The gathering comes from growth where light is strong; steering adds nothing measurable.</p>
+        <p class="result">Mean position was 158.5 with a gradient, 128.3 under even light, and 160.3 with the light sense blinded. The gradient and blinded arms differed by -1.8 (95% Welch CI -19.4 to 15.8), consistent with growth across the light field rather than steering.</p>
       </div>
     </div>
     <div class="card" id="ocean">
@@ -171,8 +171,25 @@ footer { padding: 60px 0 70px; color: var(--faint); font-size: 14px; }
 <section id="ltee-data">
   <h2>LTEE fitness data</h2>
   <p>The dataset contains competition measurements from E. coli populations against an oppositely marked ancestor. The analysis averages available replicates by generation and fits a descriptive power law to bins with at least four measurements.</p>
+  <div class="hero"><img src="data/ltee-fitness.svg" alt="Binned E. coli LTEE relative fitness measurements and a descriptive power-law curve" loading="lazy"></div>
+  <p class="caption">The curve summarizes the measured LTEE trajectory. Life World rates remain uncalibrated to these measurements.</p>
   <p><a href="data/ltee-fitness.csv">Download source data</a> · <a href="data/ltee-fitness-mean.csv">Download binned means</a> · <a href="data/README.md">Read the method and source citation</a></p>
-  <p class="dim">This analysis describes the published trajectory. The Life World transfer preset represents a random 1% bottleneck and food reset. Its growth rates and tick duration are not calibrated to E. coli.</p>
+  <p class="dim">The Life World transfer preset represents a random 1% bottleneck and food reset. It does not simulate the daily growth cycle. Its growth rates, tick duration, morphology and fitness are not calibrated to E. coli.</p>
+</section>
+<section id="run-set">
+  <h2>Latest replicated run set</h2>
+  <p>Five experiment families were rerun with five replicates per arm and matched seed values within each experiment. The run series, simulator summaries, means and treatment-control contrasts are downloadable.</p>
+  <p><a href="data/experiments/README.md">Run details and commands</a> · <a href="data/experiments/summary.csv">Arm means and 95% intervals</a> · <a href="data/experiments/contrasts.csv">Treatment-control differences</a></p>
+  <table>
+    <tr><th>Model experiment</th><th>Outcome</th><th>Treatment minus control</th><th>95% Welch interval</th></tr>
+    <tr><td>Range expansion</td><td>Local over global heterozygosity</td><td>-0.877</td><td>-0.929 to -0.825</td></tr>
+    <tr><td>MEGA-plate</td><td>Mean resistance</td><td>0.384</td><td>0.368 to 0.399</td></tr>
+    <tr><td>Predator and prey</td><td>Final prey count, no refuge minus refuge</td><td>-2,180</td><td>-2,405 to -1,955</td></tr>
+    <tr><td>Phototaxis</td><td>Mean position, gradient minus even light</td><td>30.2</td><td>15.3 to 45.0</td></tr>
+    <tr><td>Phototaxis control</td><td>Mean position, gradient minus blinded</td><td>-1.8</td><td>-19.4 to 15.8</td></tr>
+    <tr><td>Evolved networks</td><td>Mean neurons, active minus inert</td><td>-1.09</td><td>-3.02 to 0.85</td></tr>
+  </table>
+  <p class="dim">These are simulated outcomes. The cited studies provide empirical context for qualitative patterns. The parameter values and time scales have not been calibrated against those studies.</p>
 </section>
 
 <footer class="page-footer"><span>FlowGenomics</span><a href="https://github.com/godofecht/genomic-world">Source code</a><a href="data/README.md">Data and citations</a></footer>
