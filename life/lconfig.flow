@@ -92,6 +92,9 @@ const L_COOLDOWN: i32 = 20
 const L_MAX_AGE: i32 = 900
 const L_MORTALITY: f32 = 0.002
 const L_UPKEEP: f32 = 0.004
+# Metabolic cost per expressed evolved neuron per tick. Applied equally in
+# active and inert controls: network growth must justify a real energy cost.
+const L_NEUR_UPKEEP: f32 = 0.0005
 const L_MOVE_COST: f32 = 0.0016
 const THERMAL_L: f32 = 0.03
 const L_ATTACK_COST: f32 = 0.004

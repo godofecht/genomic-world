@@ -13,7 +13,8 @@
 #                       (GW_PRESET, GW_MODE, GW_DIMS, GW_TICKS, GW_PROFILE)
 #   ./run.sh life-video N  N frames rendered headless, to out/life.mp4
 #   ./run.sh experiment NAME  replicated, controlled experiment (phototaxis,
-#                       refuge, networks, range, megaplate) to out/exp/
+#                       refuge, networks, network-value, range, megaplate)
+#                       to out/exp/
 #   ./run.sh experiment-suite run the standard set of five experiments and
 #                       package their tables for the research site
 #   ./run.sh shot       headless life world renders to out/ (see

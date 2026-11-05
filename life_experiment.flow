@@ -4,7 +4,8 @@
 # from GW_REPS seeds (the same seeds in every arm), records time series to
 # out/exp/NAME.csv, and reports each outcome per arm as a mean with a 95%
 # confidence interval (Student's t), and the difference between the
-# treatment and each control with a 95% Welch interval. A difference whose
+# treatment and each control with a 95% paired Student-t interval (replicates
+# share seeds). A difference whose
 # interval excludes zero is significant at the 5% level.
 #
 #   GW_EXP=phototaxis  treatment: the light gradient. Controls: the same
@@ -17,10 +18,12 @@
 #                      Outcomes: prey and predators alive at the end.
 #   GW_EXP=networks    Gause's dish with a refuge, evolved networks active,
 #                      against the same networks computed and inherited but
-#                      driving nothing. If networks grow only by mutation
-#                      pressure the two arms match; if larger networks are
-#                      selected, the active arm grows faster.
+#                      driving nothing. Both arms pay identical neuron upkeep.
 #                      Outcomes: mean and largest network size.
+#   GW_EXP=network-value  Same two arms, with mean energy per living
+#                      organism and cumulative births per 1000 organism-ticks.
+#                      An effect on function/fitness is distinct from an
+#                      increase in network size. Results are not guaranteed.
 #   GW_EXP=range       a drop of two neutral strains on agar, against a
 #                      stirred liquid culture. Outcome: local
 #                      heterozygosity (how often a cell's nearest neighbour
@@ -185,6 +188,11 @@ function main() -> i32 {
         preset = P_REFUGE
         ticks = 20000
         every = 1000
+    } elif strcmp(name, "network-value") == 0 {
+        exp = 5
+        preset = P_REFUGE
+        ticks = 20000
+        every = 1000
     } elif strcmp(name, "range") == 0 {
         exp = 3
         preset = P_RANGE
@@ -203,6 +211,7 @@ function main() -> i32 {
     ticks = env_i("GW_TICKS", ticks)
     let mut reps: i32 = env_i("GW_REPS", 5)
     if reps > MAX_REPS { reps = MAX_REPS }
+    if reps < 2 { printf("GW_REPS must be at least 2 for confidence intervals\n"); return 2 }
 
     let arm_names: array<string, 3> = ["treatment", "control", "control 2"]
     if exp == 0 {
@@ -212,7 +221,7 @@ function main() -> i32 {
     } elif exp == 1 {
         arm_names[0] = "no refuge"
         arm_names[1] = "refuge"
-    } elif exp == 2 {
+    } elif exp == 2 or exp == 5 {
         arm_names[0] = "networks active"
         arm_names[1] = "networks inert"
     } elif exp == 3 {
@@ -232,6 +241,9 @@ function main() -> i32 {
     } elif exp == 2 {
         out_names[0] = "mean evolved neurons"
         out_names[1] = "largest network"
+    } elif exp == 5 {
+        out_names[0] = "mean living energy"
+        out_names[1] = "births per 1000 organism ticks"
     } elif exp == 3 {
         out_names[0] = "local / global heterozygosity"
         out_names[1] = "organisms"
@@ -254,7 +266,7 @@ function main() -> i32 {
             if exp == 1 and arm == 1 { preset = P_REFUGE }
             if exp == 1 and arm == 0 { preset = P_GAUSE }
             if exp == 1 { cfg = preset_cfg(preset, preset_mode(preset), 2) }
-            if exp == 2 and arm == 1 { cfg.net_inert = true }
+            if (exp == 2 or exp == 5) and arm == 1 { cfg.net_inert = true }
             if exp == 3 and arm == 1 {
                 cfg.viscosity = 1.0
                 cfg.flow = 0.12
@@ -264,9 +276,13 @@ function main() -> i32 {
             let mut acc0: f64 = 0.0
             let mut acc1: f64 = 0.0
             let mut nacc: i32 = 0
+            let mut births_total: i64 = 0 as i64
+            let mut organism_ticks: i64 = 0 as i64
             let mut t: i32 = 0
             while t < ticks and l.n > 0 {
                 life_step(&l)
+                births_total = births_total + (l.births as i64)
+                organism_ticks = organism_ticks + (l.n as i64)
                 t = t + 1
                 if t % every == 0 or t == ticks {
                     let mut m1: f64 = 0.0
@@ -287,6 +303,13 @@ function main() -> i32 {
                         census_genomes(&cs, l.cr, l.genome, l.n)
                         m1 = cs.mean_neur as f64
                         m2 = cs.max_neur as f64
+                    } elif exp == 5 {
+                        let mut total_energy: f64 = 0.0
+                        for i in 0 to l.n { total_energy = total_energy + (l.cr[i].en as f64) }
+                        m1 = total_energy / (l.n as f64)
+                        if organism_ticks > 0 {
+                            m2 = 1000.0 * (births_total as f64) / (organism_ticks as f64)
+                        }
                     } elif exp == 3 {
                         m1 = segregation(&l)
                         m2 = l.n as f64
@@ -364,14 +387,14 @@ function main() -> i32 {
                 xa[rep] = res[rep * OUTCOMES + o]
                 xb[rep] = res[(arm * MAX_REPS + rep) * OUTCOMES + o]
             }
-            let va: f64 = var_of(xa, reps) / (reps as f64)
-            let vb: f64 = var_of(xb, reps) / (reps as f64)
-            let d: f64 = mean_of(xa, reps) - mean_of(xb, reps)
-            let se: f64 = sqrt(va + vb)
-            let mut df: f64 = 1000.0
-            let den: f64 = va * va / ((reps - 1) as f64) + vb * vb / ((reps - 1) as f64)
-            if den > 0.0 { df = (va + vb) * (va + vb) / den }
-            let half: f64 = t95(df) * se
+            # Paired design: replicate r in treatment uses the same seed
+            # as replicate r in control. Infer on within-seed differences,
+            # not on two artificially independent samples.
+            for rep in 0 to reps {
+                xb[rep] = res[rep * OUTCOMES + o] - res[(arm * MAX_REPS + rep) * OUTCOMES + o]
+            }
+            let d: f64 = mean_of(xb, reps)
+            let half: f64 = t95((reps - 1) as f64) * sqrt(var_of(xb, reps) / (reps as f64))
             tb_str(&sum, "  ")
             tb_str(&sum, arm_names[0])
             tb_str(&sum, " minus ")

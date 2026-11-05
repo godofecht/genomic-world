@@ -317,7 +317,7 @@ Each brain has two parts, both genetic.
 - A fixed core: ten inputs, four hidden neurons that feed back on
   themselves, two outputs, 72 weights. Inputs: food ahead and to each
   side, the nearest prey and threat, the nearest possible mate, its own
-  energy, the light gradient along its heading, the current across its
+  energy, the left-minus-right light difference at an eyespot, the current across its
   body (a lateral line), and a bias. Outputs are turning and thrust.
 - An evolved network on top of it: a third gene list in the genome, one
   gene per neuron. A neuron gene sets its activation (tanh, logistic, a
@@ -336,7 +336,9 @@ anything a network does has evolved. Networks do grow: in a 30,000-tick
 ocean run the mean reached 11.6 neurons and the largest 18. A controlled
 experiment (below) shows that in Gause's dish this growth is mutation
 pressure: networks that evolve but drive nothing grow as large as active
-ones. No selection for larger networks is detectable there.
+ones. No selection for larger networks was detectable in the original,
+zero-neuron-cost experiment. The revised model charges energy for each
+evolved neuron in both active and inert arms; revised results are pending.
 
 ### Ecology
 
@@ -376,9 +378,14 @@ These are simplified versions. What they show is measured below.
 seeds and writes every time
 series to `out/exp/NAME.csv`, and reports each outcome over the last
 quarter of the run as a mean with a 95 percent confidence interval, and
-the difference between arms with a 95 percent Welch interval. Run the
-complete set with `./run.sh experiment-suite`; it packages the results in
-`docs/data/experiments/` for the project page.
+The revised experiment runner reports treatment-control differences with 95 percent paired Student-t intervals.
+The published table below is a **historical baseline** from the earlier model,
+which reported 95 percent Welch intervals. The estimates have not been
+regenerated with the new light-direction and neuron-upkeep mechanisms and
+must not be interpreted as validation of those changes. The pre-change
+published run set is available in `docs/data/experiments/`; the command
+`./run.sh experiment-suite` packages future reruns for the project page.
+`tools/plot_experiments.py` draws the charts on the project page.
 
 | Experiment | Outcome | Treatment | Control | Difference (95% CI) | Reading |
 |---|---|---|---|---|---|
@@ -395,6 +402,17 @@ networks were being selected. An earlier refuge experiment used a predator
 that could graze when prey ran out (`out/exp/refuge_facultative.txt`). The
 founding predator now has no cytostome, matching Didinium's prey-specific
 feeding role.
+
+The new phototaxis configuration starts with an explicitly encoded
+light-to-turn reflex, uses signed lateral contrast rather than a forward
+brightness measurement, and respects the eyespot trait. This tests
+**causal steering**; it does not demonstrate evolution of phototaxis.
+The revised experiments also test `network-value` (energy and births per
+organism-tick) and charge neuron upkeep in both active and inert arms.
+Run `./run.sh test`, `./run.sh experiment phototaxis`,
+`./run.sh experiment networks`, and `./run.sh experiment network-value`;
+new numerical findings must come from those runs, not the archived table.
+See [causal validation protocol](docs/CAUSAL_VALIDATION.md).
 
 ### Viewing
 
@@ -461,8 +479,9 @@ intervals for the life world. Still to do:
   effective population size.
 - Calibration: rates and units tied to a real organism for any claim
   beyond qualitative.
-- A setting where evolved networks pay, with a control showing selection
-  on them, before claiming anything about the evolution of behaviour.
+- Reproduce the new common neuron-upkeep cost and network-value controls
+  with enough replicates to measure selection, before claiming that
+  larger networks or particular behaviours have evolved.
 - Sensitivity analysis: how each result depends on the hand-set
   constants.
 - More replicates, and outside review by a biologist.

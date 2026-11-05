@@ -140,6 +140,10 @@ export function preset_cfg(p: i32, mode: i32, dims: i32) -> LifeCfg {
         c.founders = 1500
         c.founder_chloro = 12
         c.founder_mouth = 1
+        # Positive lateral light difference activates left turning. The
+        # light-to-turn reflex is a known founder trait, not an evolutionary
+        # discovery; its causal effect must survive the blinded control.
+        c.founder_light_turn = 3.0
     } else {
         c.habitat = HAB_DISH
         c.flow = 0.12

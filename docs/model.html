@@ -98,11 +98,11 @@ th { color: var(--dim); font-weight: 500; }
 <h2>4. Design concepts</h2>
 <ul>
   <li><b>Basic principles.</b> Energy budgets (intake against upkeep, movement and damage costs) decide survival and reproduction. No selection coefficient is a parameter; selection is measured.</li>
-  <li><b>Emergence.</b> Trophic roles, body plans, network size, phototaxis, resistance, community composition and population dynamics all emerge.</li>
+  <li><b>Emergence.</b> Trophic roles, body plans, network size, spatial light gathering, resistance, community composition and population dynamics emerge. The revised phototaxis preset also seeds a genetically encoded directional reflex; its evolution has not been demonstrated.</li>
   <li><b>Adaptation.</b> No individual adapts; lineages evolve.</li>
   <li><b>Objectives.</b> None. Organisms have no fitness function.</li>
   <li><b>Learning and prediction.</b> None, except what recurrent neurons can hold over time.</li>
-  <li><b>Sensing.</b> Food ahead and to each side at the sensing range; nearest prey, threat and possible mate within range, as a side (left or right) weighted by nearness; own energy; the light gradient along the heading; the current across the body; a bias.</li>
+  <li><b>Sensing.</b> Food ahead and to each side at the sensing range; nearest prey, threat and possible mate within range, as a side (left or right) weighted by nearness; own energy; left-minus-right illumination at an eyespot (zero when blinded or eyeless); the current across the body; a bias.</li>
   <li><b>Interaction.</b> Competition for food and light in a cell; predation within a reach that grows with body radius; mating within that reach.</li>
   <li><b>Stochasticity.</b> Mutation, recombination, mate and victim choice, attack success, background mortality, heading noise, offspring placement.</li>
   <li><b>Collectives.</b> None are modelled; groups and forms are observed only.</li>
@@ -126,7 +126,7 @@ th { color: var(--dim); font-weight: 500; }
 <h3>Brain</h3>
 <p>Core: <span class="m">h_j &larr; tanh(&Sigma;_i w_ji x_i + r_j h_j)</span>; turning <span class="m">clip(&Sigma; w x + &Sigma; w h + E_turn, &minus;1, 1)</span>; thrust <span class="m">logistic(&Sigma; w x + &Sigma; w h + E_thrust)</span>. Evolved neurons: <span class="m">s_k &larr; act_k(b_k + a_k s_k + &Sigma;_c w_c src_c)</span>, all updated together from senses, the core's new state and their own previous values; E_turn and E_thrust are the sums of their output weights times their new values. Weights <span class="m">(v &minus; 31.5) / 8</span> for 6-bit v.</p>
 <h3>Movement and costs</h3>
-<p>Heading changes by <span class="m">0.6 &middot; turn + U(&minus;0.05, 0.05)</span>. Position moves by thrust &middot; top speed &middot; viscosity along the heading plus the fluid velocity; a move into a wall is refused and the heading reversed. Cost per tick <span class="m">0.004 &middot; upkeep + 0.0016 &middot; D &middot; v&sup2;</span> + thermal cost <span class="m">0.03 &middot; mass &middot; (T &minus; T_opt)&sup2;</span> (ocean) + toxin harm <span class="m">0.12 &middot; max(0, toxin &minus; 4 &middot; resistance)</span>. Background mortality 0.002 per tick; maximum age 900.</p>
+<p>Heading changes by <span class="m">0.6 &middot; turn + U(&minus;0.05, 0.05)</span>. Position moves by thrust &middot; top speed &middot; viscosity along the heading plus the fluid velocity; a move into a wall is refused and the heading reversed. Cost per tick <span class="m">0.004 &middot; upkeep + 0.0005 &middot; expressed evolved neurons + 0.0016 &middot; D &middot; v&sup2;</span> + thermal cost <span class="m">0.03 &middot; mass &middot; (T &minus; T_opt)&sup2;</span> (ocean) + toxin harm <span class="m">0.12 &middot; max(0, toxin &minus; 4 &middot; resistance)</span>. Background mortality 0.002 per tick; maximum age 900.</p>
 <h3>Feeding</h3>
 <p>Per cell, organisms in index order: a mouth takes up to its bite of food, then the rest of its bite of detritus at efficiency 0.7. Photosynthesis yields <span class="m">0.06 &middot; L &middot; light map / (1 + 0.6 (food + detritus)) &middot; capacity &middot; share</span>, where share is <span class="m">min(1, 6 / total capacity in the cell)</span>, and consumes 0.25 food per unit of energy. Energy is capped at capacity.</p>
 <h3>Predation</h3>
