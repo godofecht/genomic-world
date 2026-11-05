@@ -1,0 +1,13 @@
+experiment,outcome,treatment,control,replicates_per_arm,difference,welch_ci95_low,welch_ci95_high
+range,local / global heterozygosity,agar,stirred liquid,5,-0.876920000,-0.929290967,-0.824549033
+range,organisms,agar,stirred liquid,5,-167.025000000,-775.371723312,441.321723312
+megaplate,mean resistance,antibiotic,no drug,5,0.383710000,0.368479889,0.398940111
+megaplate,highest resistance,antibiotic,no drug,5,0.646875000,0.624758003,0.668991997
+refuge,prey alive at end,no refuge,refuge,5,-2180.000000000,-2404.514738567,-1955.485261433
+refuge,predators alive at end,no refuge,refuge,5,-119.400000000,-886.768558302,647.968558302
+phototaxis,mean position (128 = no bias),gradient,even light,5,30.183135556,15.347882301,45.018388810
+phototaxis,share in brightest quarter,gradient,even light,5,0.175277778,0.087716678,0.262838877
+phototaxis,mean position (128 = no bias),gradient,blinded,5,-1.794766667,-19.405785793,15.816252460
+phototaxis,share in brightest quarter,gradient,blinded,5,-0.021131111,-0.127221390,0.084959168
+networks,mean evolved neurons,networks active,networks inert,5,-1.088366667,-3.024664853,0.847931520
+networks,largest network,networks active,networks inert,5,-0.666666667,-3.353604267,2.020270934

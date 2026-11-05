@@ -1,0 +1,11 @@
+megaplate: 5 replicates per arm, 12000 ticks
+
+mean resistance
+  antibiotic: 0.387 (95% CI 0.371 to 0.402)
+  no drug: 0.003 (95% CI 0.002 to 0.004)
+  antibiotic minus no drug: 0.384 (95% CI 0.368 to 0.399; significant)
+
+highest resistance
+  antibiotic: 0.875 (95% CI 0.875 to 0.875)
+  no drug: 0.228 (95% CI 0.206 to 0.250)
+  antibiotic minus no drug: 0.647 (95% CI 0.625 to 0.669; significant)

@@ -15,6 +15,8 @@
 #   ./run.sh experiment NAME  replicated, controlled experiment (phototaxis,
 #                       refuge, networks, network-value, range, megaplate)
 #                       to out/exp/
+#   ./run.sh experiment-suite run the standard set of five experiments and
+#                       package their tables for the research site
 #   ./run.sh shot       headless life world renders to out/ (see
 #                       life_shot.flow for the GW_ settings)
 #   ./run.sh equilibrium  calibrate, solve the attractors, compare cold and
@@ -99,6 +101,9 @@ case "${1:-gfx}" in
         mkdir -p out/exp
         GW_EXP="${2:-phototaxis}" flow run life_experiment.flow 2>&1 | quiet
         ;;
+    experiment-suite)
+        python3 analysis/run_experiment_suite.py
+        ;;
     life-bench)
         flow run life_bench.flow 2>&1 | quiet
         ;;
@@ -121,7 +126,7 @@ case "${1:-gfx}" in
         flow run export_run.flow 2>&1 | quiet
         ;;
     *)
-        echo "usage: $0 [gfx|record N [stride]|bench|test|validate|export|equilibrium|life|life-bench|life-video N|shot]" >&2
+        echo "usage: $0 [gfx|record N [stride]|bench|test|validate|export|equilibrium|life|life-bench|life-video N|experiment NAME|experiment-suite|shot]" >&2
         exit 2
         ;;
 esac
