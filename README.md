@@ -560,7 +560,7 @@ Known gaps. These are limits of the model as it stands.
 
 ## Licence
 
-This repository has no licence yet. By default that means you may read the code here, but you may not copy, change or reuse it without the author's permission.
+You can use, copy and change this code for any purpose, as long as you keep the copyright notice. See [LICENSE](LICENSE) (MIT).
 
 The E. coli fitness data in `docs/data/ltee-fitness.csv` comes from a Dryad dataset that is reusable under CC0 (public domain).
 
