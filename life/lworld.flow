@@ -118,6 +118,9 @@ struct LifeCfg {
     # evolved networks are computed and inherited but drive nothing; light
     # is spread evenly; no toxin is laid down.
     blind_light: bool,
+    # Initial genetically encoded steering coefficient for a habitat;
+    # zero outside the explicit phototaxis demonstration.
+    founder_light_turn: f32,
     net_inert: bool,
     light_uniform: bool,
     no_toxin: bool,
@@ -135,7 +138,8 @@ export function cfg_default() -> LifeCfg {
         founders: L_FOUNDERS, found_x: 0.0, found_y: 0.0, found_r: 0.0,
         groups: 8, founder_chloro: 0, founder_mouth: -1, founder_bacterial: false,
         medium: 0.7, sex: 1.0,
-        blind_light: false, net_inert: false, light_uniform: false, no_toxin: false,
+        blind_light: false, founder_light_turn: 0.0,
+        net_inert: false, light_uniform: false, no_toxin: false,
         mix_groups: false
     }
 }
@@ -460,6 +464,12 @@ export function life_found(l: ptr<Life>) -> void {
                 l.genome[w] = l.genome[w] ^ ((1 as u32) << ((bit & 31) as u32))
             }
         }
+        # This is a heritable *starting reflex*, not an evolved result.
+        # Apply it after standing mutations so all experimental arms start
+        # with the same, explicit light-to-turn connection.
+        if l.cfg.founder_light_turn != 0.0 {
+            l_set_weight(l.genome, gb, brain_w_out(0, 6), l.cfg.founder_light_turn)
+        }
         life_express(l, i)
         l.cr[i].px = x
         l.cr[i].py = y
@@ -635,14 +645,18 @@ export function life_act(l: ptr<Life>) -> void {
         inp[3] = prey_s
         inp[4] = thr_s
         inp[5] = cr[i].en / cr[i].ecap
-        # Light: how much brighter it is ahead, at the eye's range, than
-        # here. A gradient along the heading, as an eyespot shaded by its
-        # cell gives; steering by it is run and tumble.
-        let here: i32 = cell_index(x, y)
-        let ahead: i32 = cell_index(wrap_x(x + r * ch), wrap_y(y + r * sh))
-        inp[6] = 4.0 * (l_light(day * lightmap[ahead], food[ahead], det[ahead])
-                        - l_light(day * lightmap[here], food[here], det[here]))
-        if blind { inp[6] = 0.0 }
+        # Light direction: the left-eye sample minus the right-eye sample.
+        # Unlike forward-minus-current intensity this is an odd, signed
+        # error in heading: left brighter => positive turn (left), right
+        # brighter => negative turn (right). Use the *physical lightmap*
+        # rather than food or detritus, which would confound sensory input
+        # with local nutrient availability. Blind and eyeless organisms
+        # have no photoreceptor signal.
+        if !blind and cr[i].eyes > 0 {
+            let left: i32 = cell_index(wrap_x(x + rs * cl), wrap_y(y + rs * sl))
+            let right: i32 = cell_index(wrap_x(x + rs * crr), wrap_y(y + rs * sr))
+            inp[6] = 4.0 * day * (lightmap[left] - lightmap[right])
+        }
         inp[7] = mate_s
         let wu: f32 = fluid_u_at(fl, x, y)
         let wv: f32 = fluid_v_at(fl, x, y)
@@ -682,7 +696,10 @@ export function life_act(l: ptr<Life>) -> void {
         } else {
             cr[i].hd = nh + 3.14159265
         }
-        let mut cost: f32 = L_UPKEEP * cr[i].upkeep + L_MOVE_COST * cr[i].drag * moved * moved
+        # Structural neuron upkeep is paid even by the inert-control arm.
+        # Otherwise network count can drift upward with no metabolic tradeoff.
+        let mut cost: f32 = L_UPKEEP * cr[i].upkeep + L_NEUR_UPKEEP * (cr[i].neurons as f32)
+                           + L_MOVE_COST * cr[i].drag * moved * moved
         if thermal {
             let row: i32 = (cr[i].py as i32) & (WORLD_H - 1)
             let dt: f32 = temp_row[row] - cr[i].topt

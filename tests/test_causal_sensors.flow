@@ -1,0 +1,88 @@
+# Controlled one-tick causal assays for light steering and neuron upkeep.
+# No reproduction, selection or spatial population structure is involved.
+import "stdlib/memory.flow"
+import gsim.config
+import glife.lconfig
+import glife.lgenome
+import glife.brain
+import glife.creature
+import glife.lworld
+import glife.habitat
+
+extern {
+    function fabs(x: f64) -> f64
+}
+
+function set_pose(l: ptr<Life>) -> void {
+    l.cr[0].px = 128.0
+    l.cr[0].py = 128.0
+    l.cr[0].hd = 1.5707963
+}
+
+function main() -> i32 {
+    let mut cfg: LifeCfg = preset_cfg(P_PHOTOTAXIS, MODE_MORPH, 2)
+    cfg.founders = 1
+    cfg.flow = 0.0
+
+    let mut blinded: LifeCfg = cfg
+    blinded.blind_light = true
+    let mut uniform: LifeCfg = cfg
+    uniform.light_uniform = true
+
+    let mut a: Life = life_create_cfg(271828 as u32, P_PHOTOTAXIS, cfg)
+    let mut b: Life = life_create_cfg(271828 as u32, P_PHOTOTAXIS, blinded)
+    let mut c: Life = life_create_cfg(271828 as u32, P_PHOTOTAXIS, uniform)
+
+    if a.n != 1 or b.n != 1 or c.n != 1 {
+        printf("FAIL: did not initialise one founder per arm\n")
+        return 1
+    }
+    let w: f32 = a.brain[brain_w_out(0, 6)]
+    if w < 2.9 or w > 3.1 {
+        printf("FAIL: missing genetic founder light-to-turn weight: %f\n", w as f64)
+        return 2
+    }
+    set_pose(&a)
+    set_pose(&b)
+    set_pose(&c)
+    life_index(&a)
+    life_index(&b)
+    life_index(&c)
+    life_act(&a)
+    life_act(&b)
+    life_act(&c)
+
+    # Light grows toward +x. Facing +y, +x is on the RIGHT. A lateral
+    # photoreceptor should turn clockwise; an eyeless/blinded control
+    # should not respond to physical lightmap differences.
+    if a.cr[0].turn >= b.cr[0].turn - 0.01 {
+        printf("FAIL: right-brighter light did not induce rightward steering (%f versus %f)\n",
+               a.cr[0].turn as f64, b.cr[0].turn as f64)
+        return 3
+    }
+    if fabs((b.cr[0].turn - c.cr[0].turn) as f64) > 0.0001 {
+        printf("FAIL: blinded gradient differs from unblinded uniform light\n")
+        return 4
+    }
+
+    # The two controls were identical through their first tick. Change
+    # only expressed network count: both cases have zero network output.
+    # The difference in energy loss must equal structural neuron upkeep.
+    b.cr[0].neurons = 5
+    c.cr[0].neurons = 0
+    let eb: f32 = b.cr[0].en
+    let ec: f32 = c.cr[0].en
+    life_index(&b)
+    life_index(&c)
+    life_act(&b)
+    life_act(&c)
+    let extra: f64 = ((eb - b.cr[0].en) - (ec - c.cr[0].en)) as f64
+    let expected: f64 = (5.0 * L_NEUR_UPKEEP) as f64
+    if fabs(extra - expected) > 0.0002 {
+        printf("FAIL: neuron upkeep mismatch: got %f expected %f\n", extra, expected)
+        return 5
+    }
+
+    printf("OK causal light steering, blind/uniform controls, and neuron upkeep\n")
+    return 0
+}

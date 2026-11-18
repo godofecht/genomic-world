@@ -5,7 +5,7 @@
 #            3 prey direction (+ left, - right, weighted by nearness)
 #            4 threat direction (same convention)
 #            5 own energy as a fraction of capacity
-#            6 light gradient: brighter ahead (+) or behind (-)
+#            6 lateral light contrast: brighter left (+) or right (-)
 #            7 nearest possible mate (same convention as prey)
 #            8 lateral line: the current across the body, + pushing left
 #            9 constant 1 (bias)
